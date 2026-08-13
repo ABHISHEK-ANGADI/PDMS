@@ -1,5 +1,5 @@
-// admin/src/admin/pages/CurriculumCompiler.jsx
-import React, { useState, useEffect } from "react";
+// admin/pages/CurriculumCompiler.jsx
+import React, { useState, useEffect, useRef } from "react";
 import AdminLayout from "../components/AdminLayout";
 import {
   Layers,
@@ -11,9 +11,11 @@ import {
   BarChart3,
   ChevronRight,
   Settings,
+  Eye,
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
+import Preview from "../components/Preview";
 
 const STATUS_CONFIG = {
   Approved: { badge: "bg-green-100 text-green-700", dot: "bg-green-500" },
@@ -41,11 +43,13 @@ const CurriculumCompiler = () => {
   const [readiness, setReadiness] = useState(null);
   const [loadingList, setLoadingList] = useState(true);
   const [checking, setChecking] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false); // unified loading state
+
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewBookData, setPreviewBookData] = useState(null);
 
   const [searchTerm, setSearch] = useState("");
 
-  // Dynamic Title Configuration
   const [curriculumConfig, setCurriculumConfig] = useState({
     title: "Bachelor of Technology",
     subtitle: "Computer Science and Engineering",
@@ -79,7 +83,7 @@ const CurriculumCompiler = () => {
         `/api/admin/compiler/readiness/${pd._id}`,
         {
           headers: { Authorization: `Bearer ${adminToken}` },
-        },
+        }
       );
       if (data.success) {
         setReadiness(data.analysis);
@@ -96,13 +100,48 @@ const CurriculumCompiler = () => {
     }
   };
 
-  // ── UNIFIED DOWNLOAD HANDLER (Your backend PDF generation workflow) ──
+  // ── PREVIEW (full book) ──
+  const handlePreview = async () => {
+    if (pct < 100) {
+      return toast.error("Curriculum is not 100% complete!");
+    }
+
+    setIsPreviewLoading(true);
+    const toastId = toast.loading("Preparing curriculum book preview...");
+
+    try {
+      const { data } = await axios.get(
+        `/api/admin/compiler/preview/${selectedPd._id}`,
+        {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        }
+      );
+      if (data.success) {
+        setPreviewBookData({
+          html: data.html,
+          tocItems: data.tocItems,
+          bookData: data.bookData,
+          programId: selectedPd._id,
+        });
+        toast.success("Preview ready!", { id: toastId });
+      } else {
+        toast.error(data.message || "Failed to load preview", { id: toastId });
+      }
+    } catch (error) {
+      console.error("Preview error:", error);
+      toast.error("Failed to load preview", { id: toastId });
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  // ── DOWNLOAD (full book) ──
   const handleDownload = async () => {
     if (pct < 100) {
       return toast.error("Curriculum is not 100% complete!");
     }
 
-    setIsGenerating(true);
+    setIsDownloading(true);
     const toastId = toast.loading("Generating Curriculum Book...");
 
     try {
@@ -137,14 +176,14 @@ const CurriculumCompiler = () => {
         "Failed to generate curriculum book.";
       toast.error(message, { id: toastId });
     } finally {
-      setIsGenerating(false);
+      setIsDownloading(false);
     }
   };
 
   const filtered = programs.filter(
     (pd) =>
       pd.program_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pd.program_id?.toLowerCase().includes(searchTerm.toLowerCase()),
+      pd.program_id?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const pct = readiness?.completionPercentage || 0;
@@ -400,7 +439,7 @@ const CurriculumCompiler = () => {
                   ))}
                 </div>
 
-                {/* Bottom Action Bar – now uses handleDownload */}
+                {/* Bottom Action Bar */}
                 <div className="p-5 bg-white border-t border-stone-200 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0">
                   <div className="flex items-center gap-2.5 text-stone-600 text-sm bg-stone-50 px-4 py-2 rounded-xl border border-stone-100">
                     <FileText size={16} className="text-amber-600" />
@@ -408,32 +447,60 @@ const CurriculumCompiler = () => {
                     <strong>{readiness.totalApproved} CDs</strong>.
                   </div>
 
-                  <button
-                    onClick={handleDownload}
-                    disabled={pct < 100 || isGenerating}
-                    className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold transition-all text-sm w-full sm:w-auto ${
-                      pct === 100
-                        ? "bg-amber-800 text-white hover:bg-amber-900 shadow-xl shadow-amber-900/20 active:scale-95"
-                        : "bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed"
-                    }`}
-                  >
-                    {isGenerating ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Download size={16} />
-                    )}
-                    {isGenerating
-                      ? "Generating..."
-                      : pct === 100
-                      ? "Download Curriculum Book"
-                      : `${readiness.totalRequired - readiness.totalApproved} Courses Missing`}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {/* Preview & Download full book */}
+                    <button
+                      onClick={handlePreview}
+                      disabled={pct < 100 || isDownloading || isPreviewLoading}
+                      className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold transition-all text-sm w-full sm:w-auto ${
+                        pct === 100
+                          ? "bg-amber-800 text-white hover:bg-amber-900 shadow-xl shadow-amber-900/20 active:scale-95"
+                          : "bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed"
+                      }`}
+                    >
+                      {isPreviewLoading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Eye size={16} />
+                      )}
+                      {isPreviewLoading ? "Loading Preview..." : "Preview & Download"}
+                    </button>
+
+                    {/* Direct Download (updated colour) */}
+                    <button
+                      onClick={handleDownload}
+                      disabled={pct < 100 || isDownloading || isPreviewLoading}
+                      className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold transition-all text-sm ${
+                        pct === 100
+                          ? "bg-amber-600 text-white hover:bg-amber-700 shadow-md shadow-amber-600/30 active:scale-95"
+                          : "bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed"
+                      }`}
+                      title="Download directly without preview"
+                    >
+                      {isDownloading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Download size={16} />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* ── PREVIEW MODAL ──────────────────────────────────────────────── */}
+      {previewBookData && (
+        <Preview
+          isModal={true}
+          onClose={() => setPreviewBookData(null)}
+          bookData={previewBookData.bookData}
+          bookHtml={previewBookData.html}
+          tocItemsForBook={previewBookData.tocItems}
+        />
+      )}
     </AdminLayout>
   );
 };

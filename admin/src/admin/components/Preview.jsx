@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+// admin/components/Preview.jsx
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -13,6 +14,7 @@ import {
   Download,
   CheckCircle,
   Copy,
+  Info,          // added for banner icon
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import parse from "html-react-parser";
@@ -111,6 +113,7 @@ const STYLES = `
     box-shadow: 0 0 0 1px rgba(0,0,0,0.1), 0 10px 40px rgba(0,0,0,0.3);
     padding: 20mm 20mm 25mm 20mm; box-sizing: border-box;
     font-family: var(--font-doc); font-size: 11pt; line-height: 1.6; color: #000;
+    
   }
 
   /* Cover Page */
@@ -167,6 +170,40 @@ const STYLES = `
     .pd-doc { box-shadow: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; border: none !important; }
     @page { size: A4 portrait; margin: 15mm; }
   }
+
+  /* ── Info Banner ──────────────────────────────────────────────── */
+  .pd-info-banner {
+    width: 100%;
+    background: #1e293b;
+    color: #94a3b8;
+    padding: 8px 20px;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #334155;
+    font-family: var(--font-ui);
+    flex-shrink: 0;
+  }
+  .pd-info-banner span {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pd-info-banner button {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: 0.15s;
+  }
+  .pd-info-banner button:hover {
+    background: #334155;
+    color: #fff;
+  }
 `;
 
 const SecMajor = ({ children, id }) => (
@@ -201,11 +238,15 @@ const Preview = ({
   onClose,
   passedPdData,
   passedMetaData,
+  // NEW props for curriculum book preview
+  bookData = null,
+  bookHtml = null,
+  tocItemsForBook = null,
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const { axios, createrToken } = useAppContext();
+  const { axios, createrToken, adminToken } = useAppContext();
 
   const docRef = useRef(null);
   const shellRef = useRef(null);
@@ -225,6 +266,113 @@ const Preview = ({
   const [searchQ, setSearchQ] = useState("");
   const [progress, setProgress] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [isBookDownloading, setIsBookDownloading] = useState(false);
+
+  // Determine if we are showing a book preview
+  const isBook = !!bookHtml && !!bookData;
+  // For book preview, we use the program ID from bookData
+  const programIdForBook = bookData?.programData?.program_id || null;
+  const programNameForBook = bookData?.programData?.program_name || "Curriculum Book";
+
+  // Info banner state – no localStorage, resets each time the modal opens
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const handleBannerDismiss = () => {
+    setBannerDismissed(true);
+  };
+
+  // Wrap the raw book HTML in a full document so it can be rendered in an
+  // isolated iframe (via srcDoc) without leaking/inheriting parent styles.
+  const wrappedBookHtml = useMemo(() => {
+    if (!bookHtml) return "";
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+  * { box-sizing: border-box; }
+  html {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  body {
+    margin: 15mm 20mm !important;
+    padding: 0 !important;
+    background: #fff;
+    font-family: 'Times New Roman', Times, serif;
+    max-width: 100%;
+    overflow-x: hidden;
+    width: auto;
+    box-sizing: border-box;
+  }
+  /* For screen: show page breaks */
+  @media screen {
+    .pd-page-break, .page-break {
+      display: block;
+      border-bottom: 1px dashed #ddd;
+      margin: 20px 0;
+      padding: 8px 0;
+      text-align: center;
+      font-size: 8pt;
+      color: #bbb;
+    }
+    .pd-page-break::after, .page-break::after {
+      content: "— Page Break —";
+      letter-spacing: 2px;
+    }
+    .pd-cover {
+      display: block;
+      margin-bottom: 20px;
+    }
+  }
+  /* Print styles: actual page breaks */
+  @media print {
+    .pd-page-break, .page-break {
+      page-break-after: always;
+    }
+    .pd-page-break::after, .page-break::after {
+      content: "";
+    }
+  }
+  table {
+    table-layout: fixed;
+    width: 100% !important;
+    max-width: 100%;
+    word-break: break-word;
+  }
+  td, th {
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+  img, pre, code {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  /* Ensure cover doesn't have extra break after */
+  .pd-cover {
+    page-break-after: avoid;
+  }
+</style>
+</head>
+<body>
+  ${bookHtml}
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+        anchor.addEventListener('click', function(e) {
+          e.preventDefault();
+          var targetId = this.getAttribute('href').substring(1);
+          var target = document.getElementById(targetId);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>`;
+  }, [bookHtml]);
 
   useEffect(() => {
     if (isModal) {
@@ -339,14 +487,27 @@ const Preview = ({
   };
 
   const scrollTo = (id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      setTocOpen(false);
+    const iframe = docRef.current;
+    if (isBook && iframe && iframe.contentDocument) {
+      const target = iframe.contentDocument.getElementById(id);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTocOpen(false);
+      }
+    } else {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTocOpen(false);
+      }
     }
   };
 
+  // ── Generate filename ──────────────────────────────────────────────────
   const generateFilename = useCallback(() => {
+    if (isBook && programIdForBook) {
+      return `${programIdForBook}_Curriculum_Book.pdf`;
+    }
     if (!data) return "Program_Document.pdf";
     const { pdData, metaData } = data;
     const prog = (pdData.details?.program_name || "Program")
@@ -355,25 +516,55 @@ const Preview = ({
       .trim();
     const ver = (metaData.versionNo || "1_0_0").replace(/\./g, "_");
     return `PD_${prog}_v${ver}.pdf`;
-  }, [data]);
+  }, [isBook, programIdForBook, data]);
 
-  const handleDownloadPDF = useCallback(() => {
+  // ── Handle download (for PD or Book) ────────────────────────────────
+  const handleDownloadPDF = useCallback(async () => {
+    // If we have a book, use the download API to get the decorated PDF
+    if (isBook && programIdForBook) {
+      setIsBookDownloading(true);
+      const toastId = toast.loading("Generating Curriculum Book...");
+      try {
+        const token = adminToken || (await axios.get("/api/admin/token")).data?.token;
+        const response = await axios.get(
+          `/api/admin/compiler/download/${programIdForBook}`,
+          {
+            headers: { Authorization: `Bearer ${adminToken}` },
+            responseType: "blob",
+          }
+        );
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", `${programIdForBook}_Curriculum_Book.pdf`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        toast.success("Curriculum Book downloaded successfully!", { id: toastId });
+      } catch (error) {
+        console.error("Download error:", error);
+        toast.error("Failed to generate curriculum book.", { id: toastId });
+      } finally {
+        setIsBookDownloading(false);
+        setDdOpen(false);
+      }
+      return;
+    }
+
+    // Fallback to client-side html2pdf (for PD preview)
     const element = docRef.current;
     if (!element) {
       toast.error("Document not ready");
       return;
     }
-
-    // Generate filename (same as before)
     const filename = generateFilename();
-
-    // Options for html2pdf
     const opt = {
-      margin: 0, // No extra margin; content fills the page
+      margin: 0,
       filename: filename,
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: {
-        scale: 2, // Higher resolution
+        scale: 2,
         useCORS: true,
         logging: false,
       },
@@ -382,10 +573,8 @@ const Preview = ({
         format: "a4",
         orientation: "portrait",
       },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] }, // Respect CSS page breaks
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
     };
-
-    // Generate and download the PDF
     html2pdf()
       .set(opt)
       .from(element)
@@ -396,12 +585,11 @@ const Preview = ({
       .catch((err) => {
         console.error(err);
         toast.error("PDF generation failed. Falling back to print dialog.");
-        // Fallback to window.print() if html2pdf fails
         window.print();
       });
-
     setDdOpen(false);
-  }, [generateFilename]);
+  }, [isBook, programIdForBook, adminToken, axios, generateFilename]);
+
   const handleCopyFilename = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(generateFilename());
@@ -413,6 +601,56 @@ const Preview = ({
     }
     setDdOpen(false);
   }, [generateFilename]);
+
+  // ── Build TOC sections ────────────────────────────────────────────────
+  // If book preview, use provided tocItems; else build from PD data
+  let TOC_SECTIONS = [];
+  if (isBook && tocItemsForBook) {
+    TOC_SECTIONS = tocItemsForBook.map((item) => ({
+      id: item.id,
+      num: item.page || "—",
+      label: item.title,
+      sub: item.level > 0,
+    }));
+    // Add cover and front matter manually if needed
+    TOC_SECTIONS.unshift({ id: "cover", num: "—", label: "Cover Page" });
+    // Add a separator for Program Overview etc.
+  } else if (data) {
+    const { pdData, metaData } = data;
+    const is2026 = metaData.schemaVersion === "2026";
+    const sec4 = pdData.section4 || {};
+    TOC_SECTIONS = [
+      { id: "cover", num: "—", label: "Cover Page" },
+      { id: "prog-details", num: "—", label: "Program & Award Details" },
+      { id: "sec-14", num: "14", label: "Program Overview" },
+      { id: "sec-15", num: "15", label: "Program Educational Objectives" },
+      { id: "sec-16", num: "16", label: "Program Outcomes" },
+      { id: "sec-17", num: "17", label: "Program Specific Outcomes" },
+      { id: "sec-18", num: "18", label: "Programme Structure" },
+      { id: "sec-19", num: "19", label: "Credit Definitions" },
+      { id: "sec-20", num: "20", label: "Semester-wise Courses" },
+    ];
+    if (is2026) {
+      TOC_SECTIONS.push(
+        { id: "sec-21", num: "21", label: "Technical Competency Courses" },
+        { id: "sec-22", num: "22", label: "Program Delivery & Attainment" },
+        { id: "sec-23", num: "23", label: "Teaching & Learning Methods" },
+        { id: "sec-24", num: "24", label: "Attendance Policy" },
+        { id: "sec-25", num: "25", label: "Assessment & Grading" },
+        { id: "sec-26", num: "26", label: "Award of Degree" },
+        { id: "sec-27", num: "27", label: "Student Support" },
+        { id: "sec-28", num: "28", label: "Quality Control Measures" },
+        { id: "sec-29", num: "29", label: "Additional Notes" },
+      );
+    } else {
+      TOC_SECTIONS.push(
+        { id: "sec-21", num: "21", label: "Professional Electives", sub: true },
+        { id: "sec-22", num: "22", label: "Open Electives", sub: true },
+      );
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────
 
   if (loading)
     return (
@@ -431,43 +669,16 @@ const Preview = ({
         />
       </div>
     );
-  if (!data) return null;
+  if (!data && !isBook) return null;
 
-  const { pdData, metaData } = data;
-  const is2026 = metaData.schemaVersion === "2026";
-  const sec4 = pdData.section4 || {};
-
-  // Build Dynamic TOC
-  const TOC_SECTIONS = [
-    { id: "cover", num: "—", label: "Cover Page" },
-    { id: "prog-details", num: "—", label: "Program & Award Details" },
-    { id: "sec-14", num: "14", label: "Program Overview" },
-    { id: "sec-15", num: "15", label: "Program Educational Objectives" },
-    { id: "sec-16", num: "16", label: "Program Outcomes" },
-    { id: "sec-17", num: "17", label: "Program Specific Outcomes" },
-    { id: "sec-18", num: "18", label: "Programme Structure" },
-    { id: "sec-19", num: "19", label: "Credit Definitions" },
-    { id: "sec-20", num: "20", label: "Semester-wise Courses" },
-  ];
-
-  if (is2026) {
-    TOC_SECTIONS.push(
-      { id: "sec-21", num: "21", label: "Technical Competency Courses" },
-      { id: "sec-22", num: "22", label: "Program Delivery & Attainment" },
-      { id: "sec-23", num: "23", label: "Teaching & Learning Methods" },
-      { id: "sec-24", num: "24", label: "Attendance Policy" },
-      { id: "sec-25", num: "25", label: "Assessment & Grading" },
-      { id: "sec-26", num: "26", label: "Award of Degree" },
-      { id: "sec-27", num: "27", label: "Student Support" },
-      { id: "sec-28", num: "28", label: "Quality Control Measures" },
-      { id: "sec-29", num: "29", label: "Additional Notes" },
-    );
-  } else {
-    TOC_SECTIONS.push(
-      { id: "sec-21", num: "21", label: "Professional Electives", sub: true },
-      { id: "sec-22", num: "22", label: "Open Electives", sub: true },
-    );
-  }
+  const handleIframeLoad = () => {
+    const iframe = docRef.current;
+    if (iframe && iframe.contentDocument) {
+      const body = iframe.contentDocument.body;
+      const height = body.scrollHeight + 20; // small buffer to avoid clipping
+      iframe.style.height = height + "px";
+    }
+  };
 
   return (
     <div ref={shellRef} className={isModal ? "preview-overlay" : "pd-shell"}>
@@ -549,12 +760,15 @@ const Preview = ({
                 <button
                   className="pd-dropdown-item"
                   onClick={handleDownloadPDF}
+                  disabled={isBookDownloading}
                 >
                   <Printer size={15} />
                   <div>
-                    <div className="pd-dropdown-item-label">Save as PDF</div>
+                    <div className="pd-dropdown-item-label">
+                      {isBookDownloading ? "Generating..." : "Save as PDF"}
+                    </div>
                     <div className="pd-dropdown-item-sub">
-                      Opens print dialog
+                      {isBook ? "Download decorated PDF" : "Opens print dialog"}
                     </div>
                   </div>
                 </button>
@@ -582,6 +796,19 @@ const Preview = ({
         </div>
       </div>
 
+      {/* ── INFO BANNER (only for book preview, reappears each session) ── */}
+      {isBook && !bannerDismissed && (
+        <div className="pd-info-banner no-print">
+          <span>
+            <Info size={16} style={{ flexShrink: 0 }} />
+            Header and footer will be added when you download the PDF.
+          </span>
+          <button onClick={handleBannerDismiss} title="Dismiss this message">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* TOC Panel */}
       <div className={`pd-toc-panel no-print ${tocOpen ? "open" : ""}`}>
         <div className="pd-toc-title">
@@ -608,540 +835,574 @@ const Preview = ({
             marginTop: isModal ? "20px" : "0",
           }}
         >
-          <div ref={docRef} className="pd-doc">
-            {/* ── COVER ─────────────────────────────────────────── */}
-            <div id="cover" className="pd-cover">
-              <div className="pd-cover-uni">
-                {pdData.details?.university || "GM UNIVERSITY"}
-              </div>
-              <div className="pd-cover-type">Program Document</div>
-              <div className="pd-cover-scheme">
-                {metaData.schemeYear} Scheme
-              </div>
-              <div className="pd-cover-program">
-                {pdData.award?.title?.toUpperCase() ||
-                  metaData.programName?.toUpperCase() ||
-                  "PROGRAM NAME"}
-              </div>
-              <div className="pd-cover-school">
-                {pdData.details?.school}
-                <br />
-                {pdData.details?.faculty}
-              </div>
-            </div>
+          {isBook ? (
+            /* ── Book preview: isolated iframe via srcDoc, directly on dark shell ── */
+            <iframe
+              ref={docRef}
+              srcDoc={wrappedBookHtml}
+              sandbox="allow-same-origin allow-scripts"
+              scrolling="no"
+              onLoad={handleIframeLoad}
+              style={{
+                width: "240mm",
+                minHeight: "297mm",
+                height: "auto",
+                border: "none",
+                background: "#fff",
+                boxShadow:
+                  "0 0 0 1px rgba(0,0,0,0.1), 0 10px 40px rgba(0,0,0,0.3)",
+                display: "block",
+                margin: "0 auto",
+                overflow: "hidden",
+              }}
+              title="Curriculum Book Preview"
+            />
+          ) : (
+            /* ── PD Document Rendering (unchanged) ───────────────── */
+            <div ref={docRef} className="pd-doc">
+              <>
+                {/* ── COVER ─────────────────────────────────────────── */}
+                <div id="cover" className="pd-cover">
+                  <div className="pd-cover-uni">
+                    {data.pdData.details?.university || "GM UNIVERSITY"}
+                  </div>
+                  <div className="pd-cover-type">Program Document</div>
+                  <div className="pd-cover-scheme">
+                    {data.metaData.schemeYear} Scheme
+                  </div>
+                  <div className="pd-cover-program">
+                    {data.pdData.award?.title?.toUpperCase() ||
+                      data.metaData.programName?.toUpperCase() ||
+                      "PROGRAM NAME"}
+                  </div>
+                  <div className="pd-cover-school">
+                    {data.pdData.details?.school}
+                    <br />
+                    {data.pdData.details?.faculty}
+                  </div>
+                </div>
 
-            <div id="prog-details" className="pd-int-hdr">
-              <div className="pd-int-hdr-prog">
-                {pdData.details?.program_name || metaData.programName}
-              </div>
-              <div className="pd-int-hdr-meta">
-                Version: {metaData.versionNo}{" "}
-                {metaData.effectiveAy &&
-                  ` · Effective A.Y: ${metaData.effectiveAy}`}
-              </div>
-            </div>
+                <div id="prog-details" className="pd-int-hdr">
+                  <div className="pd-int-hdr-prog">
+                    {data.pdData.details?.program_name || data.metaData.programName}
+                  </div>
+                  <div className="pd-int-hdr-meta">
+                    Version: {data.metaData.versionNo}{" "}
+                    {data.metaData.effectiveAy &&
+                      ` · Effective A.Y: ${data.metaData.effectiveAy}`}
+                  </div>
+                </div>
 
-            <SecMajor>Program Details</SecMajor>
-            <table>
-              <tbody>
-                {[
-                  ["Faculty", pdData.details?.faculty],
-                  ["School", pdData.details?.school],
-                  ["Department", pdData.details?.department],
-                  ["Program", pdData.details?.program_name],
-                  ["Director of School", pdData.details?.director],
-                  ["Head of Department", pdData.details?.hod],
-                ].map(([lbl, val]) => (
-                  <tr key={lbl}>
-                    <td className="w-label">{lbl}</td>
-                    <td>{val || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                <SecMajor>Program Details</SecMajor>
+                <table>
+                  <tbody>
+                    {[
+                      ["Faculty", data.pdData.details?.faculty],
+                      ["School", data.pdData.details?.school],
+                      ["Department", data.pdData.details?.department],
+                      ["Program", data.pdData.details?.program_name],
+                      ["Director of School", data.pdData.details?.director],
+                      ["Head of Department", data.pdData.details?.hod],
+                    ].map(([lbl, val]) => (
+                      <tr key={lbl}>
+                        <td className="w-label">{lbl}</td>
+                        <td>{val || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
 
-            <SecMajor>Award Details</SecMajor>
-            <table>
-              <tbody>
-                {[
-                  {
-                    id: "1.",
-                    label: "Title of the Award",
-                    val: pdData.award?.title,
-                  },
-                  {
-                    id: "2.",
-                    label: "Modes of Study",
-                    val: pdData.award?.mode,
-                  },
-                  {
-                    id: "3.",
-                    label: "Awarding Institution",
-                    val: pdData.award?.awarding_body,
-                  },
-                  {
-                    id: "4.",
-                    label: "Joint Award",
-                    val: pdData.award?.joint_award,
-                  },
-                  {
-                    id: "5.",
-                    label: "Teaching Institution",
-                    val: pdData.award?.teaching_institution,
-                  },
-                  {
-                    id: "6.",
-                    label: "Date of Program Specs",
-                    val: pdData.award?.date_program_specs,
-                  },
-                  {
-                    id: "7.",
-                    label: "Date of Course Approval",
-                    val: pdData.award?.date_approval,
-                  },
-                  {
-                    id: "8.",
-                    label: "Next Review Date",
-                    val: pdData.award?.next_review,
-                  },
-                  {
-                    id: "9.",
-                    label: "Program Approving Body",
-                    val: pdData.award?.approving_body,
-                  },
-                  {
-                    id: "10.",
-                    label: "Program Accredited Body",
-                    val: pdData.award?.accredited_body,
-                  },
-                  {
-                    id: "11.",
-                    label: "Grade Awarded",
-                    val: pdData.award?.accreditation_grade,
-                  },
-                  {
-                    id: "12.",
-                    label: "Accreditation Validity",
-                    val: pdData.award?.accreditation_validity,
-                  },
-                  {
-                    id: "13.",
-                    label: "Program Benchmark",
-                    val: pdData.award?.benchmark,
-                  },
-                ].map((row) => (
-                  <tr key={row.id}>
-                    <td className="w-serial">{row.id}</td>
-                    <td className="w-label">{row.label}</td>
-                    <td>{row.val || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                <SecMajor>Award Details</SecMajor>
+                <table>
+                  <tbody>
+                    {[
+                      {
+                        id: "1.",
+                        label: "Title of the Award",
+                        val: data.pdData.award?.title,
+                      },
+                      {
+                        id: "2.",
+                        label: "Modes of Study",
+                        val: data.pdData.award?.mode,
+                      },
+                      {
+                        id: "3.",
+                        label: "Awarding Institution",
+                        val: data.pdData.award?.awarding_body,
+                      },
+                      {
+                        id: "4.",
+                        label: "Joint Award",
+                        val: data.pdData.award?.joint_award,
+                      },
+                      {
+                        id: "5.",
+                        label: "Teaching Institution",
+                        val: data.pdData.award?.teaching_institution,
+                      },
+                      {
+                        id: "6.",
+                        label: "Date of Program Specs",
+                        val: data.pdData.award?.date_program_specs,
+                      },
+                      {
+                        id: "7.",
+                        label: "Date of Course Approval",
+                        val: data.pdData.award?.date_approval,
+                      },
+                      {
+                        id: "8.",
+                        label: "Next Review Date",
+                        val: data.pdData.award?.next_review,
+                      },
+                      {
+                        id: "9.",
+                        label: "Program Approving Body",
+                        val: data.pdData.award?.approving_body,
+                      },
+                      {
+                        id: "10.",
+                        label: "Program Accredited Body",
+                        val: data.pdData.award?.accredited_body,
+                      },
+                      {
+                        id: "11.",
+                        label: "Grade Awarded",
+                        val: data.pdData.award?.accreditation_grade,
+                      },
+                      {
+                        id: "12.",
+                        label: "Accreditation Validity",
+                        val: data.pdData.award?.accreditation_validity,
+                      },
+                      {
+                        id: "13.",
+                        label: "Program Benchmark",
+                        val: data.pdData.award?.benchmark,
+                      },
+                    ].map((row) => (
+                      <tr key={row.id}>
+                        <td className="w-serial">{row.id}</td>
+                        <td className="w-label">{row.label}</td>
+                        <td>{row.val || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
 
-            <SecMajor id="sec-14">14. Program Overview</SecMajor>
-            <div className="pd-rich pd-tj">
-              {parse(pdData.overview || "<p>Not provided.</p>")}
-            </div>
+                <SecMajor id="sec-14">14. Program Overview</SecMajor>
+                <div className="pd-rich pd-tj">
+                  {parse(data.pdData.overview || "<p>Not provided.</p>")}
+                </div>
 
-            <SecMajor id="sec-15">
-              15. Program Educational Objectives (PEOs)
-            </SecMajor>
-            {pdData.peos?.map(
-              (peo, i) =>
-                peo && <ObjBlock key={i} html={peo} prefix="PEO" idx={i} />,
-            )}
+                <SecMajor id="sec-15">
+                  15. Program Educational Objectives (PEOs)
+                </SecMajor>
+                {data.pdData.peos?.map(
+                  (peo, i) =>
+                    peo && <ObjBlock key={i} html={peo} prefix="PEO" idx={i} />,
+                )}
 
-            <SecMajor id="sec-16">16. Program Outcomes (POs)</SecMajor>
-            {pdData.pos?.map(
-              (po, i) =>
-                po && <ObjBlock key={i} html={po} prefix="PO" idx={i} />,
-            )}
+                <SecMajor id="sec-16">16. Program Outcomes (POs)</SecMajor>
+                {data.pdData.pos?.map(
+                  (po, i) =>
+                    po && <ObjBlock key={i} html={po} prefix="PO" idx={i} />,
+                )}
 
-            <SecMajor id="sec-17">
-              17. Program Specific Outcomes (PSOs)
-            </SecMajor>
-            {pdData.psos?.map(
-              (pso, i) =>
-                pso && <ObjBlock key={i} html={pso} prefix="PSO" idx={i} />,
-            )}
+                <SecMajor id="sec-17">
+                  17. Program Specific Outcomes (PSOs)
+                </SecMajor>
+                {data.pdData.psos?.map(
+                  (pso, i) =>
+                    pso && <ObjBlock key={i} html={pso} prefix="PSO" idx={i} />,
+                )}
 
-            <SecMajor id="sec-18">18. Programme Structure</SecMajor>
-            <div className="pd-credit-box">
-              1 Hr. Lecture (L) per week = {pdData.credit_def?.L ?? 0} Credit
-              &nbsp;|&nbsp; 2 Hr. Tutorial (T) per week ={" "}
-              {pdData.credit_def?.T ?? 0} Credit &nbsp;|&nbsp; 2 Hr. Practical
-              (P) per week = {pdData.credit_def?.P ?? 0} Credit
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th className="w-cr">Credits</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(pdData.structure_table || []).map((row, i) => (
-                  <tr key={i}>
-                    <td>{row.category || "—"}</td>
-                    <td className="pd-tc pd-fb">{row.credits ?? 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td
-                    className="pd-tr w-label"
-                    style={{ paddingRight: 14, textAlign: "right" }}
-                  >
-                    Total Credits
-                  </td>
-                  <td>
-                    {(pdData.structure_table || []).reduce(
-                      (a, r) => a + (parseFloat(r.credits) || 0),
-                      0,
-                    )}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                <SecMajor id="sec-18">18. Programme Structure</SecMajor>
+                <div className="pd-credit-box">
+                  1 Hr. Lecture (L) per week = {data.pdData.credit_def?.L ?? 0} Credit
+                  &nbsp;|&nbsp; 2 Hr. Tutorial (T) per week ={" "}
+                  {data.pdData.credit_def?.T ?? 0} Credit &nbsp;|&nbsp; 2 Hr. Practical
+                  (P) per week = {data.pdData.credit_def?.P ?? 0} Credit
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Category</th>
+                      <th className="w-cr">Credits</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.pdData.structure_table || []).map((row, i) => (
+                      <tr key={i}>
+                        <td>{row.category || "—"}</td>
+                        <td className="pd-tc pd-fb">{row.credits ?? 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td
+                        className="pd-tr w-label"
+                        style={{ paddingRight: 14, textAlign: "right" }}
+                      >
+                        Total Credits
+                      </td>
+                      <td>
+                        {(data.pdData.structure_table || []).reduce(
+                          (a, r) => a + (parseFloat(r.credits) || 0),
+                          0,
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
 
-            <SecMajor id="sec-19">19. Credit Definitions (L-T-P)</SecMajor>
-            <table style={{ width: "55%", margin: "0 auto" }}>
-              <thead>
-                <tr>
-                  <th>Component</th>
-                  <th>Credits per Hour</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ["Lecture (L)", pdData.credit_def?.L ?? 0],
-                  ["Tutorial (T)", pdData.credit_def?.T ?? 0],
-                  ["Practical (P)", pdData.credit_def?.P ?? 0],
-                ].map(([lbl, val]) => (
-                  <tr key={lbl}>
-                    <td className="pd-tc">{lbl}</td>
-                    <td className="pd-tc pd-fb">{val}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                <SecMajor id="sec-19">19. Credit Definitions (L-T-P)</SecMajor>
+                <table style={{ width: "55%", margin: "0 auto" }}>
+                  <thead>
+                    <tr>
+                      <th>Component</th>
+                      <th>Credits per Hour</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["Lecture (L)", data.pdData.credit_def?.L ?? 0],
+                      ["Tutorial (T)", data.pdData.credit_def?.T ?? 0],
+                      ["Practical (P)", data.pdData.credit_def?.P ?? 0],
+                    ].map(([lbl, val]) => (
+                      <tr key={lbl}>
+                        <td className="pd-tc">{lbl}</td>
+                        <td className="pd-tc pd-fb">{val}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
 
-            <div className="pd-page-break" />
+                <div className="pd-page-break" />
 
-            <SecMajor id="sec-20">20. Semester-wise Courses</SecMajor>
-            {(pdData.semesters || []).map((sem) => {
-              const hasCourses = is2026
-                ? sem.categories?.some((cat) => cat.courses?.length > 0)
-                : sem.courses?.length > 0;
+                <SecMajor id="sec-20">20. Semester-wise Courses</SecMajor>
+                {(data.pdData.semesters || []).map((sem) => {
+                  const is2026 = data.metaData.schemaVersion === "2026";
+                  const hasCourses = is2026
+                    ? sem.categories?.some((cat) => cat.courses?.length > 0)
+                    : sem.courses?.length > 0;
 
-              if (!hasCourses) return null;
+                  if (!hasCourses) return null;
 
-              return (
-                <div
-                  key={sem.sem_no}
-                  style={{ marginBottom: 28, pageBreakInside: "avoid" }}
-                >
-                  <div className="pd-sem-hdr">Semester {sem.sem_no}</div>
+                  return (
+                    <div
+                      key={sem.sem_no}
+                      style={{ marginBottom: 28, pageBreakInside: "avoid" }}
+                    >
+                      <div className="pd-sem-hdr">Semester {sem.sem_no}</div>
 
-                  {is2026 ? (
-                    /* ── 2026 CATEGORIZED SEMESTER TABLE ── */
-                    sem.categories.map((cat, idx) => {
-                      if (!cat.courses || cat.courses.length === 0) return null;
-                      return (
-                        <div key={idx} style={{ marginBottom: 15 }}>
-                          <div className="pd-cat-hdr">{cat.categoryName}</div>
+                      {is2026 ? (
+                        /* ── 2026 CATEGORIZED SEMESTER TABLE ── */
+                        sem.categories.map((cat, idx) => {
+                          if (!cat.courses || cat.courses.length === 0) return null;
+                          return (
+                            <div key={idx} style={{ marginBottom: 15 }}>
+                              <div className="pd-cat-hdr">{cat.categoryName}</div>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th className="w-serial">S.No</th>
+                                    <th className="w-code">Course Code</th>
+                                    <th>Course Title</th>
+                                    <th className="w-cr">Credits</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {cat.courses.map((c, i) => (
+                                    <tr key={i}>
+                                      <td className="pd-tc">{i + 1}</td>
+                                      <td className="w-code">{c.code || "—"}</td>
+                                      <td>{c.title || "—"}</td>
+                                      <td className="pd-tc pd-fb">
+                                        {c.credits ?? 0}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        /* ── 2024 FLAT SEMESTER TABLE ── */
+                        <table>
+                          <thead>
+                            <tr>
+                              <th className="w-serial">S.No</th>
+                              <th className="w-code">Course Code</th>
+                              <th>Course Title</th>
+                              <th className="w-cr">Credits</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sem.courses.map((c, i) => (
+                              <tr key={i}>
+                                <td className="pd-tc">{i + 1}</td>
+                                <td className="w-code">{c.code || "—"}</td>
+                                <td>{c.title || "—"}</td>
+                                <td className="pd-tc pd-fb">{c.credits ?? 0}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+
+                      <table style={{ marginTop: is2026 ? -10 : 0 }}>
+                        <tfoot>
+                          <tr>
+                            <td
+                              className="w-label"
+                              style={{ paddingRight: 14, textAlign: "right" }}
+                            >
+                              Semester Total
+                            </td>
+                            <td className="w-cr pd-tc pd-fb">
+                              {sumSemCredits(sem, is2026)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })}
+
+                <div className="pd-page-break" />
+
+                {/* ── CONDITIONAL SECTION 21+ RENDERING based on Schema Version ── */}
+                {(() => {
+                  const is2026 = data.metaData.schemaVersion === "2026";
+                  const sec4 = data.pdData.section4 || {};
+                  const pdData = data.pdData;
+                  if (is2026) {
+                    return (
+                      <>
+                        <SecMajor id="sec-21">
+                          21. Technical Competency Courses
+                        </SecMajor>
+                        {sec4.technicalCompetencyCourses?.length > 0 ? (
                           <table>
                             <thead>
                               <tr>
-                                <th className="w-serial">S.No</th>
-                                <th className="w-code">Course Code</th>
-                                <th>Course Title</th>
+                                <th className="w-serial">#</th>
+                                <th className="w-code">Code</th>
+                                <th>Title</th>
                                 <th className="w-cr">Credits</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {cat.courses.map((c, i) => (
+                              {sec4.technicalCompetencyCourses.map((c, i) => (
                                 <tr key={i}>
                                   <td className="pd-tc">{i + 1}</td>
                                   <td className="w-code">{c.code || "—"}</td>
                                   <td>{c.title || "—"}</td>
-                                  <td className="pd-tc pd-fb">
-                                    {c.credits ?? 0}
-                                  </td>
+                                  <td className="pd-tc pd-fb">{c.credits ?? 0}</td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
+                        ) : (
+                          <p>No technical competency courses specified.</p>
+                        )}
+
+                        <SecMajor id="sec-22">
+                          22. Program Delivery & Attainment
+                        </SecMajor>
+                        <div className="pd-rich pd-tj">
+                          {parse(
+                            sec4.programDeliveryAndAttainment || "<p>Not provided.</p>",
+                          )}
                         </div>
-                      );
-                    })
-                  ) : (
-                    /* ── 2024 FLAT SEMESTER TABLE ── */
-                    <table>
-                      <thead>
-                        <tr>
-                          <th className="w-serial">S.No</th>
-                          <th className="w-code">Course Code</th>
-                          <th>Course Title</th>
-                          <th className="w-cr">Credits</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sem.courses.map((c, i) => (
-                          <tr key={i}>
-                            <td className="pd-tc">{i + 1}</td>
-                            <td className="w-code">{c.code || "—"}</td>
-                            <td>{c.title || "—"}</td>
-                            <td className="pd-tc pd-fb">{c.credits ?? 0}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
 
-                  {/* Semester Total */}
-                  <table style={{ marginTop: is2026 ? -10 : 0 }}>
-                    <tfoot>
-                      <tr>
-                        <td
-                          className="w-label"
-                          style={{ paddingRight: 14, textAlign: "right" }}
-                        >
-                          Semester Total
-                        </td>
-                        <td className="w-cr pd-tc pd-fb">
-                          {sumSemCredits(sem, is2026)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              );
-            })}
+                        <SecMajor id="sec-23">23. Teaching & Learning Methods</SecMajor>
+                        <div className="pd-rich">
+                          <ul>
+                            {sec4.teachingLearningMethods?.map(
+                              (m, i) => m && <li key={i}>{parse(m)}</li>,
+                            )}
+                          </ul>
+                          {(!sec4.teachingLearningMethods ||
+                            sec4.teachingLearningMethods.filter(Boolean).length ===
+                              0) && <p>Not provided.</p>}
+                        </div>
 
-            <div className="pd-page-break" />
+                        <SecMajor id="sec-24">24. Attendance Policy</SecMajor>
+                        <div className="pd-rich pd-tj">
+                          {parse(sec4.attendance || "<p>Not provided.</p>")}
+                        </div>
 
-            {/* ── CONDITIONAL SECTION 21+ RENDERING based on Schema Version ── */}
-            {is2026 ? (
-              <>
-                <SecMajor id="sec-21">
-                  21. Technical Competency Courses
-                </SecMajor>
-                {sec4.technicalCompetencyCourses?.length > 0 ? (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th className="w-serial">#</th>
-                        <th className="w-code">Code</th>
-                        <th>Title</th>
-                        <th className="w-cr">Credits</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sec4.technicalCompetencyCourses.map((c, i) => (
-                        <tr key={i}>
-                          <td className="pd-tc">{i + 1}</td>
-                          <td className="w-code">{c.code || "—"}</td>
-                          <td>{c.title || "—"}</td>
-                          <td className="pd-tc pd-fb">{c.credits ?? 0}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <p>No technical competency courses specified.</p>
-                )}
+                        <SecMajor id="sec-25">25. Assessment & Grading</SecMajor>
+                        <div className="pd-rich pd-tj">
+                          {parse(
+                            sec4.assessmentGrading?.description ||
+                              "<p>Not provided.</p>",
+                          )}
 
-                <SecMajor id="sec-22">
-                  22. Program Delivery & Attainment
-                </SecMajor>
-                <div className="pd-rich pd-tj">
-                  {parse(
-                    sec4.programDeliveryAndAttainment || "<p>Not provided.</p>",
-                  )}
-                </div>
+                          {sec4.assessmentGrading?.gradeRules && (
+                            <>
+                              <div className="pd-sec-minor">Grading Rules</div>
+                              {parse(sec4.assessmentGrading.gradeRules)}
+                            </>
+                          )}
+                          {sec4.assessmentGrading?.passingCriteria && (
+                            <>
+                              <div className="pd-sec-minor">Passing Criteria</div>
+                              {parse(sec4.assessmentGrading.passingCriteria)}
+                            </>
+                          )}
+                        </div>
 
-                <SecMajor id="sec-23">23. Teaching & Learning Methods</SecMajor>
-                <div className="pd-rich">
-                  <ul>
-                    {sec4.teachingLearningMethods?.map(
-                      (m, i) => m && <li key={i}>{parse(m)}</li>,
-                    )}
-                  </ul>
-                  {(!sec4.teachingLearningMethods ||
-                    sec4.teachingLearningMethods.filter(Boolean).length ===
-                      0) && <p>Not provided.</p>}
-                </div>
+                        <SecMajor id="sec-26">26. Award of Degree</SecMajor>
+                        <div className="pd-rich pd-tj">
+                          {parse(sec4.awardOfDegree || "<p>Not provided.</p>")}
+                        </div>
 
-                <SecMajor id="sec-24">24. Attendance Policy</SecMajor>
-                <div className="pd-rich pd-tj">
-                  {parse(sec4.attendance || "<p>Not provided.</p>")}
-                </div>
+                        <div className="pd-page-break" />
 
-                <SecMajor id="sec-25">25. Assessment & Grading</SecMajor>
-                <div className="pd-rich pd-tj">
-                  {parse(
-                    sec4.assessmentGrading?.description ||
-                      "<p>Not provided.</p>",
-                  )}
+                        <SecMajor id="sec-27">
+                          27. Student Support for Learning
+                        </SecMajor>
+                        <div className="pd-rich">
+                          <ul>
+                            {sec4.studentSupport?.map(
+                              (m, i) => m && <li key={i}>{parse(m)}</li>,
+                            )}
+                          </ul>
+                          {(!sec4.studentSupport ||
+                            sec4.studentSupport.filter(Boolean).length === 0) && (
+                            <p>Not provided.</p>
+                          )}
+                        </div>
 
-                  {sec4.assessmentGrading?.gradeRules && (
-                    <>
-                      <div className="pd-sec-minor">Grading Rules</div>
-                      {parse(sec4.assessmentGrading.gradeRules)}
-                    </>
-                  )}
-                  {sec4.assessmentGrading?.passingCriteria && (
-                    <>
-                      <div className="pd-sec-minor">Passing Criteria</div>
-                      {parse(sec4.assessmentGrading.passingCriteria)}
-                    </>
-                  )}
-                </div>
+                        <SecMajor id="sec-28">28. Quality Control Measures</SecMajor>
+                        <div className="pd-rich">
+                          <ul>
+                            {sec4.qualityControlMeasures?.map(
+                              (m, i) => m && <li key={i}>{parse(m)}</li>,
+                            )}
+                          </ul>
+                          {(!sec4.qualityControlMeasures ||
+                            sec4.qualityControlMeasures.filter(Boolean).length ===
+                              0) && <p>Not provided.</p>}
+                        </div>
 
-                <SecMajor id="sec-26">26. Award of Degree</SecMajor>
-                <div className="pd-rich pd-tj">
-                  {parse(sec4.awardOfDegree || "<p>Not provided.</p>")}
-                </div>
-
-                <div className="pd-page-break" />
-
-                <SecMajor id="sec-27">
-                  27. Student Support for Learning
-                </SecMajor>
-                <div className="pd-rich">
-                  <ul>
-                    {sec4.studentSupport?.map(
-                      (m, i) => m && <li key={i}>{parse(m)}</li>,
-                    )}
-                  </ul>
-                  {(!sec4.studentSupport ||
-                    sec4.studentSupport.filter(Boolean).length === 0) && (
-                    <p>Not provided.</p>
-                  )}
-                </div>
-
-                <SecMajor id="sec-28">28. Quality Control Measures</SecMajor>
-                <div className="pd-rich">
-                  <ul>
-                    {sec4.qualityControlMeasures?.map(
-                      (m, i) => m && <li key={i}>{parse(m)}</li>,
-                    )}
-                  </ul>
-                  {(!sec4.qualityControlMeasures ||
-                    sec4.qualityControlMeasures.filter(Boolean).length ===
-                      0) && <p>Not provided.</p>}
-                </div>
-
-                {sec4.notes && (
-                  <>
-                    <SecMajor id="sec-29">29. Additional Notes</SecMajor>
-                    <div className="pd-rich pd-tj">{parse(sec4.notes)}</div>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                {/* ── 2024 Legacy Electives ── */}
-                {/* Fallback to checking root arrays if section4 is missing on older docs */}
-                {(sec4.professionalElectives?.length > 0 ||
-                  pdData.prof_electives?.length > 0) && (
-                  <div id="sec-21">
-                    <SecMajor>21. Professional Electives</SecMajor>
-                    {(sec4.professionalElectives?.length
-                      ? sec4.professionalElectives
-                      : pdData.prof_electives
-                    ).map((group, i) => (
-                      <div
-                        key={i}
-                        style={{ marginBottom: 24, pageBreakInside: "avoid" }}
-                      >
-                        <SecMinor>
-                          {group.title} — Sem {group.semester || group.sem}
-                        </SecMinor>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th className="w-serial">#</th>
-                              <th className="w-code">Code</th>
-                              <th>Title</th>
-                              <th className="w-cr">Credits</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.courses.map((c, idx) => (
-                              <tr key={idx}>
-                                <td className="pd-tc">{idx + 1}</td>
-                                <td className="w-code">{c.code || "—"}</td>
-                                <td>{c.title || "—"}</td>
-                                <td className="pd-tc pd-fb">
-                                  {c.credits ?? 0}
-                                </td>
-                              </tr>
+                        {sec4.notes && (
+                          <>
+                            <SecMajor id="sec-29">29. Additional Notes</SecMajor>
+                            <div className="pd-rich pd-tj">{parse(sec4.notes)}</div>
+                          </>
+                        )}
+                      </>
+                    );
+                  } else {
+                    // 2024 Legacy
+                    return (
+                      <>
+                        {(sec4.professionalElectives?.length > 0 ||
+                          pdData.prof_electives?.length > 0) && (
+                          <div id="sec-21">
+                            <SecMajor>21. Professional Electives</SecMajor>
+                            {(sec4.professionalElectives?.length
+                              ? sec4.professionalElectives
+                              : pdData.prof_electives
+                            ).map((group, i) => (
+                              <div
+                                key={i}
+                                style={{ marginBottom: 24, pageBreakInside: "avoid" }}
+                              >
+                                <SecMinor>
+                                  {group.title} — Sem {group.semester || group.sem}
+                                </SecMinor>
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th className="w-serial">#</th>
+                                      <th className="w-code">Code</th>
+                                      <th>Title</th>
+                                      <th className="w-cr">Credits</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {group.courses.map((c, idx) => (
+                                      <tr key={idx}>
+                                        <td className="pd-tc">{idx + 1}</td>
+                                        <td className="w-code">{c.code || "—"}</td>
+                                        <td>{c.title || "—"}</td>
+                                        <td className="pd-tc pd-fb">
+                                          {c.credits ?? 0}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                          </div>
+                        )}
 
-                {(sec4.openElectives?.length > 0 ||
-                  pdData.open_electives?.length > 0) && (
-                  <div id="sec-22">
-                    <SecMajor>22. Open Electives</SecMajor>
-                    {(sec4.openElectives?.length
-                      ? sec4.openElectives
-                      : pdData.open_electives
-                    ).map((group, i) => (
-                      <div
-                        key={i}
-                        style={{ marginBottom: 24, pageBreakInside: "avoid" }}
-                      >
-                        <SecMinor>
-                          {group.title} — Sem {group.semester || group.sem}
-                        </SecMinor>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th className="w-serial">#</th>
-                              <th className="w-code">Code</th>
-                              <th>Title</th>
-                              <th className="w-cr">Credits</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.courses.map((c, idx) => (
-                              <tr key={idx}>
-                                <td className="pd-tc">{idx + 1}</td>
-                                <td className="w-code">{c.code || "—"}</td>
-                                <td>{c.title || "—"}</td>
-                                <td className="pd-tc pd-fb">
-                                  {c.credits ?? 0}
-                                </td>
-                              </tr>
+                        {(sec4.openElectives?.length > 0 ||
+                          pdData.open_electives?.length > 0) && (
+                          <div id="sec-22">
+                            <SecMajor>22. Open Electives</SecMajor>
+                            {(sec4.openElectives?.length
+                              ? sec4.openElectives
+                              : pdData.open_electives
+                            ).map((group, i) => (
+                              <div
+                                key={i}
+                                style={{ marginBottom: 24, pageBreakInside: "avoid" }}
+                              >
+                                <SecMinor>
+                                  {group.title} — Sem {group.semester || group.sem}
+                                </SecMinor>
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th className="w-serial">#</th>
+                                      <th className="w-code">Code</th>
+                                      <th>Title</th>
+                                      <th className="w-cr">Credits</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {group.courses.map((c, idx) => (
+                                      <tr key={idx}>
+                                        <td className="pd-tc">{idx + 1}</td>
+                                        <td className="w-code">{c.code || "—"}</td>
+                                        <td>{c.title || "—"}</td>
+                                        <td className="pd-tc pd-fb">
+                                          {c.credits ?? 0}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  }
+                })()}
 
-            <div className="pd-sig">
-              <div className="pd-sig-box">
-                <div className="pd-sig-line">Director of School</div>
-              </div>
-              <div className="pd-sig-box">
-                <div className="pd-sig-line">Head of Department</div>
-              </div>
+                <div className="pd-sig">
+                  <div className="pd-sig-box">
+                    <div className="pd-sig-line">Director of School</div>
+                  </div>
+                  <div className="pd-sig-box">
+                    <div className="pd-sig-line">Head of Department</div>
+                  </div>
+                </div>
+              </>
             </div>
-            {/* End of Print Area */}
-          </div>
+          )}
         </div>
       </div>
     </div>

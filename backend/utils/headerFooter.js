@@ -1,94 +1,125 @@
-// backend/utils/headerFooter.js
 import { PDFDocument, rgb } from 'pdf-lib';
 
-/**
- * Decorate a PDF with minimal headers and footers.
- * - Front matter: Roman numerals (i, ii, iii, ...)
- * - Main content: Arabic numerals (1, 2, 3, ...)
- * - Header: Program name + scheme (right-aligned, tiny, subtle) – NO LINE
- * - Footer: University name (left, tiny, subtle) + Page number (right, visible)
- * 
- * @param {Buffer} pdfBuffer - The merged PDF (cover + curriculum)
- * @param {Object} options - Configuration options
- * @param {number} options.coverPageCount - Number of pages in the cover PDF
- * @param {string} options.headerText - Text for header (e.g., "Computer Science & Engineering – 2024")
- * @param {string} options.universityName - University name for footer (e.g., "GM University")
- * @returns {Promise<Buffer>} - PDF buffer
- */
 export const decoratePDF = async (pdfBuffer, options = {}) => {
   const {
     coverPageCount = 0,
+    frontMatterPageCount = 0,
     headerText = "",
-    universityName = "GM University",
+    headerLines = null,
+    universityName = "GM University, Davanagere",
   } = options;
+
+  const actualFrontMatterCount = frontMatterPageCount || coverPageCount || 0;
 
   const pdfDoc = await PDFDocument.load(pdfBuffer);
   const totalPages = pdfDoc.getPageCount();
   const font = await pdfDoc.embedFont('Helvetica');
 
-  // Subtle colors
-  const subtleGray = rgb(0.6, 0.6, 0.6);    // for header and university name
-  const darkVisible = rgb(0.1, 0.1, 0.1);   // for page numbers (visible)
+  // Brighter / more visible colors
+  const headerColor = rgb(0.5, 0.5, 0.5);   // medium gray – subtle
+  const footerColor = rgb(0.5, 0.5, 0.5);   // same as header
+  const pageNumColor = rgb(0.3, 0.3, 0.3);  
+
+  let romanCounter = 0;
+  let arabicCounter = 0;
 
   for (let i = 0; i < totalPages; i++) {
+    // ─── SKIP COVER (page 0) AND BACK COVER (last page) ───
+    if (i === 0 || i === totalPages - 1) {
+      continue;
+    }
+
     const page = pdfDoc.getPage(i);
     const { width, height } = page.getSize();
 
-    // ── 1. PAGE NUMBER (just the number) ──
+    // ─── DETERMINE PAGE NUMBER ───
     let pageNumberStr = "";
-    if (i < coverPageCount) {
-      pageNumberStr = toRoman(i + 1);
+    if (i <= actualFrontMatterCount) {
+      romanCounter++;
+      pageNumberStr = toRoman(romanCounter);
     } else {
-      const arabicNum = i - coverPageCount + 1;
-      pageNumberStr = arabicNum.toString();
+      arabicCounter++;
+      pageNumberStr = arabicCounter.toString();
     }
 
-    // ── 2. FOOTER: University (left) + Page Number (right) ──
+    // ─── FOOTER ──────────────────────────────────────────────
     const footerY = 28;
-    const footerFontSize = 8;      // small for university name
-    const pageNumFontSize = 10;    // slightly larger for page number
+    const footerFontSize = 9;
+    const pageNumFontSize = 11;
 
-    // Left: University name (subtle)
     page.drawText(universityName, {
       x: 30,
       y: footerY,
       size: footerFontSize,
       font: font,
-      color: subtleGray,
+      color: footerColor,
     });
 
-    // Right: Page number (visible, dark)
     const numWidth = font.widthOfTextAtSize(pageNumberStr, pageNumFontSize);
     page.drawText(pageNumberStr, {
       x: width - numWidth - 30,
       y: footerY,
       size: pageNumFontSize,
       font: font,
-      color: darkVisible,
+      color: pageNumColor,
     });
 
-    // ── 3. HEADER (only on main content, right-aligned, tiny, no line) ──
-    if (i >= coverPageCount && headerText) {
-      const headerY = height - 32;
-      const headerFontSize = 9;    // very small
+    // ─── HEADER (only for main content) ──────────────────────
+    if (i > actualFrontMatterCount) {
+      const headerFontSize = 9;
+      const headerY = height - 32; // same baseline for both lines
 
-      const textWidth = font.widthOfTextAtSize(headerText, headerFontSize);
-      page.drawText(headerText, {
-        x: width - textWidth - 30,
-        y: headerY,
-        size: headerFontSize,
-        font: font,
-        color: subtleGray,
-      });
+      if (headerLines && headerLines[i]) {
+        const { line1, line2 } = headerLines[i];
+
+        // Line 1 (left‑aligned) – e.g., "Curriculum Document 2024"
+        page.drawText(line1, {
+          x: 30,
+          y: headerY,
+          size: headerFontSize,
+          font: font,
+          color: headerColor,
+        });
+
+        // Line 2 (right‑aligned) – e.g., "B.Tech., CSE Sem-1 | Core"
+        const line2Width = font.widthOfTextAtSize(line2, headerFontSize);
+        // If line2 is too long (> 70% of width), we truncate it
+        const maxLine2Width = width * 0.65;
+        let displayLine2 = line2;
+        if (line2Width > maxLine2Width) {
+          // Truncate with ellipsis
+          let truncated = line2;
+          while (font.widthOfTextAtSize(truncated + '…', headerFontSize) > maxLine2Width && truncated.length > 5) {
+            truncated = truncated.slice(0, -1);
+          }
+          displayLine2 = truncated + '…';
+        }
+        const displayWidth = font.widthOfTextAtSize(displayLine2, headerFontSize);
+        page.drawText(displayLine2, {
+          x: width - displayWidth - 30,
+          y: headerY,
+          size: headerFontSize,
+          font: font,
+          color: headerColor,
+        });
+      } 
+      // Fallback to legacy single-line header
+      else if (headerText) {
+        const textWidth = font.widthOfTextAtSize(headerText, headerFontSize);
+        page.drawText(headerText, {
+          x: width - textWidth - 30,
+          y: headerY,
+          size: headerFontSize,
+          font: font,
+          color: headerColor,
+        });
+      }
     }
   }
 
   return Buffer.from(await pdfDoc.save());
 };
 
-/**
- * Convert number to Roman numerals (up to 20)
- */
 function toRoman(num) {
   const romanNumerals = [
     { value: 1000, symbol: 'M' },

@@ -1,4 +1,3 @@
-// backend/controllers/adminController.js
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import Admin from "../models/Admin.js";
@@ -8,19 +7,22 @@ import CourseDocument from "../models/cd/CourseDocument.js";
 import PD from "../models/pd/PD.js";
 
 // ─── PDF GENERATION IMPORTS ───────────────────────────────────────────────
-import { generateCurriculumHTML } from "../utils/curriculumHtmlGenerator.js";
+import { generateCurriculumHTML, buildTOCItems } from "../utils/curriculumHtmlGenerator.js";
 import { generateCurriculumPDF } from "../services/pdfGenerator.js";
-import { mergeWithCover, getCoverPDF } from "../utils/pdfMerger.js";
 import { PDFDocument } from "pdf-lib";
 import { decoratePDF } from "../utils/headerFooter.js";
-
-
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Resolve the admin's jurisdiction into a list of Creater ObjectIds.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Helper: Find PD by either _id (ObjectId) or program_id (string) ───
+const findPDByIdOrProgramId = async (identifier, adminId) => {
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(identifier);
+  const query = isObjectId ? { _id: identifier } : { program_id: identifier };
+  query.approved_by = adminId;
+  return await PD.findOne(query).populate("created_by", "name email");
+};
 
 const buildFormattedCD = (cd) => {
   const s1 = cd.section1_identity || {};
@@ -881,31 +883,112 @@ export const getAllPDsForAdmin = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. DOWNLOAD CURRICULUM BOOK (NEW) - Merges Cover PDF + Generated PDF
+// NEW HELPER: Build per-page header lines for dynamic two-line header
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * DOWNLOAD CURRICULUM BOOK
- * Generates the full curriculum PDF (HTML → PDF), merges with the static
- * cover PDF, and sends the final merged PDF as a download.
- *
- * Endpoint: GET /api/admin/compiler/download/:programId
- * Auth: Admin only (authAdmin middleware)
- */
-// backend/controllers/adminController.js
-// backend/controllers/adminController.js
-// ─── ADD THIS IMPORT ───────────────────────────────────────────────────────
+const buildHeaderLines = (totalPages, markerMap, pd, bookData, frontMatterCount = 13) => {
+  const headerLines = new Array(totalPages).fill(null);
+
+  // Build context map from marker IDs
+  const contextMap = new Map();
+  contextMap.set('overview', { type: 'overview' });
+  contextMap.set('structure', { type: 'structure' });
+
+  // Semester contexts
+  const semesters = bookData.semesterGroups || [];
+  semesters.forEach((group) => {
+    const sem = group.semester;
+    contextMap.set(`semester-${sem}`, { type: 'semester', semester: sem });
+    // Also add course contexts for this semester
+    group.courses.forEach((cd) => {
+      const code = cd.courseCode;
+      const title = cd.courseTitle;
+      const type = cd.identity?.courseType || 'Core'; // fallback
+      contextMap.set(`course-${code}`, {
+        type: 'course',
+        semester: sem,
+        courseCode: code,
+        courseTitle: title,
+        courseType: type,
+      });
+    });
+  });
+
+  // Also handle elective courses (if any)
+  const electives = bookData.electiveCourses || [];
+  electives.forEach((cd) => {
+    const code = cd.courseCode;
+    const title = cd.courseTitle;
+    const type = cd.identity?.courseType || 'Elective';
+    contextMap.set(`course-${code}`, {
+      type: 'course',
+      semester: 'Elective',
+      courseCode: code,
+      courseTitle: title,
+      courseType: type,
+    });
+  });
+
+  const pageMarkerMap = new Map();
+  if (markerMap && markerMap instanceof Map) {
+    for (const [markerId, pageIndex] of markerMap.entries()) {
+      pageMarkerMap.set(pageIndex, markerId);
+    }
+  }
+
+  let currentContext = null;
+  const programName = pd.program_name || 'Program';
+  const schemeYear = pd.scheme_year || '2025-26';
+
+  // Iterate only over main content pages (skip front matter, cover, back cover)
+  const startPage = frontMatterCount + 1; // first page after front matter
+  const endPage = totalPages - 2; // last page before back cover
+
+  for (let i = startPage; i <= endPage; i++) {
+    // Check if this page has a marker
+    if (pageMarkerMap.has(i)) {
+      const markerId = pageMarkerMap.get(i);
+      if (contextMap.has(markerId)) {
+        currentContext = contextMap.get(markerId);
+      }
+    }
+
+    // If no context yet, skip (should not happen after first main page)
+    if (!currentContext) continue;
+
+    // Build header lines
+    const line1 = `Curriculum Document ${schemeYear}`;
+    let line2 = '';
+
+    const ctx = currentContext;
+    if (ctx.type === 'overview') {
+      line2 = `${programName} | Program Overview`;
+    } else if (ctx.type === 'structure') {
+      line2 = `${programName} | Program Structure`;
+    } else if (ctx.type === 'semester') {
+      line2 = `${programName} Sem-${ctx.semester}`;
+    } else if (ctx.type === 'course') {
+      const semDisplay = ctx.semester !== 'Elective' ? `Sem-${ctx.semester}` : 'Elective';
+      line2 = `${programName} ${semDisplay} | ${ctx.courseTitle} | ${ctx.courseType}`;
+    }
+
+    headerLines[i] = { line1, line2 };
+  }
+
+  return headerLines;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. DOWNLOAD CURRICULUM BOOK (TWO‑PASS WITH TOC PAGE NUMBERS)
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const downloadCurriculumBook = async (req, res) => {
   try {
     const { programId } = req.params;
     const adminId = req.admin._id;
 
-    // ── 1. Fetch Program Document ──────────────────────────────────────────
-    const pd = await PD.findOne({
-      _id: programId,
-      approved_by: adminId,
-    }).populate("created_by", "name email");
-
+    // ── 1. Fetch Program Document (supports both _id and program_id) ──
+    const pd = await findPDByIdOrProgramId(programId, adminId);
     if (!pd) {
       return res.status(404).json({
         success: false,
@@ -913,35 +996,34 @@ export const downloadCurriculumBook = async (req, res) => {
       });
     }
 
-    // ── 2. Extract course codes ──────────────────────────────────────────
-    const courseCodes = [];
     const pdData = pd.pd_data || {};
 
+    // ── 2. Build courseCode → formatted CD map (unchanged) ───────────
+    const allCourseCodes = [];
     pdData.semesters?.forEach((sem) => {
-      sem.courses?.forEach((c) => courseCodes.push(c.code));
+      sem.courses?.forEach((c) => allCourseCodes.push(c.code));
       sem.categories?.forEach((cat) =>
-        cat.courses?.forEach((c) => courseCodes.push(c.code))
+        cat.courses?.forEach((c) => allCourseCodes.push(c.code))
       );
     });
     pdData.prof_electives?.forEach((grp) =>
-      grp.courses?.forEach((c) => courseCodes.push(c.code))
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
     );
     pdData.open_electives?.forEach((grp) =>
-      grp.courses?.forEach((c) => courseCodes.push(c.code))
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
     );
     pdData.section4?.professionalElectives?.forEach((grp) =>
-      grp.courses?.forEach((c) => courseCodes.push(c.code))
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
     );
     pdData.section4?.openElectives?.forEach((grp) =>
-      grp.courses?.forEach((c) => courseCodes.push(c.code))
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
     );
     pdData.section4?.technicalCompetencyCourses?.forEach((c) =>
-      courseCodes.push(c.code)
+      allCourseCodes.push(c.code)
     );
 
-    const uniqueCourseCodes = [...new Set(courseCodes)];
+    const uniqueCourseCodes = [...new Set(allCourseCodes)];
 
-    // ── 3. Fetch all APPROVED Course Documents ─────────────────────────────
     const cds = await CourseDocument.find({
       courseCode: { $in: uniqueCourseCodes },
       status: "Approved",
@@ -951,13 +1033,57 @@ export const downloadCurriculumBook = async (req, res) => {
       .populate("section3_syllabus")
       .populate("section4_resources");
 
-    // ── 4. Format the data ──────────────────────────────────────────────────
     const formattedCDs = cds.map((cd) => buildFormattedCD(cd));
-    formattedCDs.sort(
-      (a, b) =>
-        uniqueCourseCodes.indexOf(a.courseCode) -
-        uniqueCourseCodes.indexOf(b.courseCode)
+    const cdMap = {};
+    formattedCDs.forEach((cd) => {
+      cdMap[cd.courseCode] = cd;
+    });
+
+    const semesterGroups = [];
+    pdData.semesters?.forEach((sem) => {
+      const codesInSemester = [];
+      sem.courses?.forEach((c) => codesInSemester.push(c.code));
+      sem.categories?.forEach((cat) =>
+        cat.courses?.forEach((c) => codesInSemester.push(c.code))
+      );
+
+      const semesterCourses = [];
+      codesInSemester.forEach((code) => {
+        if (cdMap[code]) semesterCourses.push(cdMap[code]);
+      });
+
+      if (semesterCourses.length > 0) {
+        semesterGroups.push({
+          semester: sem.sem_no,
+          courses: semesterCourses,
+        });
+      }
+    });
+
+    const electiveCourses = [];
+    pdData.prof_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
     );
+    pdData.section4?.professionalElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.open_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.openElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.technicalCompetencyCourses?.forEach((c) => {
+      if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+    });
 
     const bookData = {
       programData: {
@@ -969,47 +1095,49 @@ export const downloadCurriculumBook = async (req, res) => {
         total_credits: pd.total_credits,
         pd_data: pd.pd_data,
       },
-      courses: formattedCDs,
+      semesterGroups: semesterGroups,
+      electiveCourses: electiveCourses,
     };
 
-    // ── 5. Generate FULL Curriculum HTML (TOC included inside) ─────────────
-    console.log("📄 Generating Curriculum HTML (with TOC inside)...");
-    const fullHtml = generateCurriculumHTML(bookData, { includeTOC: true });
-    const curriculumPdfBuffer = await generateCurriculumPDF(fullHtml);
-
-    // ── 6. Merge with cover PDF (if exists) ────────────────────────────────
-    let mergedPdfBuffer = curriculumPdfBuffer;
-    let coverPageCount = 0;
-
-    try {
-      const coverBuffer = getCoverPDF();
-      if (coverBuffer) {
-        const coverPdfDoc = await PDFDocument.load(coverBuffer);
-        coverPageCount = coverPdfDoc.getPageCount();
-        console.log(`📄 Cover has ${coverPageCount} pages.`);
-
-        console.log("📑 Merging Cover + Curriculum...");
-        mergedPdfBuffer = await mergeWithCover(curriculumPdfBuffer);
-        console.log(`✅ Merged PDF size: ${mergedPdfBuffer.length} bytes`);
-      }
-    } catch (coverError) {
-      console.warn("Cover PDF not found or could not be merged, using curriculum only.");
-      coverPageCount = 0;
-    }
-
-    // ── 7. DECORATE PDF with headers, footers, and page numbers ────────────
-    console.log("🎨 Decorating PDF (GMU style)...");
-    const finalPdfBuffer = await decoratePDF(mergedPdfBuffer, {
-      coverPageCount: coverPageCount,
-      headerText: `${pd.program_name} – ${pd.scheme_year}`,
-      universityName: "GM University",
+    // ── 8. FIRST PASS ──────────────────────────────────────────────────
+    console.log("📄 Generating first-pass HTML for marker extraction...");
+    const firstHtml = generateCurriculumHTML(bookData, {
+      includeTOC: true,
+      fullBook: true,
     });
 
-    // ── 8. Send the final decorated PDF ────────────────────────────────────
+    console.log("🔄 Converting first-pass HTML to PDF...");
+    const { buffer: firstPdfBuffer, markerMap } = await generateCurriculumPDF(firstHtml, { returnMarkers: true });
+
+    const frontMatterCount = 13;
+    const tocItems = buildTOCItems(bookData, markerMap, frontMatterCount);
+    console.log(`📊 Built ${tocItems.length} TOC items with page numbers.`);
+
+    // ── 11. SECOND PASS ──────────────────────────────────────────────
+    console.log("📄 Generating final HTML with TOC page numbers...");
+    const finalHtml = generateCurriculumHTML(bookData, {
+      includeTOC: true,
+      fullBook: true,
+      tocItems: tocItems,
+    });
+
+    console.log("🔄 Converting final HTML to PDF...");
+    const finalPdfBuffer = await generateCurriculumPDF(finalHtml);
+
+    const totalPages = (await PDFDocument.load(finalPdfBuffer)).getPageCount();
+    const headerLines = buildHeaderLines(totalPages, markerMap, pd, bookData, frontMatterCount);
+
+    console.log("🎨 Decorating PDF with dynamic header...");
+    const decoratedPdfBuffer = await decoratePDF(finalPdfBuffer, {
+      frontMatterPageCount: frontMatterCount,
+      headerLines: headerLines,
+      universityName: "GM University, Davanagere",
+    });
+
     const filename = `${pd.program_id}_Curriculum_Book.pdf`;
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
-    res.send(finalPdfBuffer);
+    res.send(decoratedPdfBuffer);
 
     console.log(`✅ Curriculum Book downloaded: ${filename}`);
   } catch (error) {
@@ -1021,3 +1149,372 @@ export const downloadCurriculumBook = async (req, res) => {
     });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOWNLOAD PD-ONLY (no front matter, no back cover) – unchanged
+// ─────────────────────────────────────────────────────────────────────────────
+export const downloadCurriculumBookPD = async (req, res) => {
+  try {
+    const { programId } = req.params;
+    const adminId = req.admin._id;
+
+    // ── 1. Fetch Program Document ──────────────────────────────────────────
+    const pd = await findPDByIdOrProgramId(programId, adminId);
+
+    if (!pd) {
+      return res.status(404).json({
+        success: false,
+        message: "Program Document not found or unauthorized.",
+      });
+    }
+
+    const pdData = pd.pd_data || {};
+
+    // ── 2. Build a map of courseCode → formatted CD ──────────────────────
+    const allCourseCodes = [];
+    pdData.semesters?.forEach((sem) => {
+      sem.courses?.forEach((c) => allCourseCodes.push(c.code));
+      sem.categories?.forEach((cat) =>
+        cat.courses?.forEach((c) => allCourseCodes.push(c.code))
+      );
+    });
+    pdData.prof_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.open_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.professionalElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.openElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.technicalCompetencyCourses?.forEach((c) =>
+      allCourseCodes.push(c.code)
+    );
+
+    const uniqueCourseCodes = [...new Set(allCourseCodes)];
+
+    // ── 3. Fetch all APPROVED Course Documents ─────────────────────────────
+    const cds = await CourseDocument.find({
+      courseCode: { $in: uniqueCourseCodes },
+      status: "Approved",
+    })
+      .populate("section1_identity")
+      .populate("section2_outcomes")
+      .populate("section3_syllabus")
+      .populate("section4_resources");
+
+    // ── 4. Build lookup map ────────────────────────────────────────────────
+    const formattedCDs = cds.map((cd) => buildFormattedCD(cd));
+    const cdMap = {};
+    formattedCDs.forEach((cd) => {
+      cdMap[cd.courseCode] = cd;
+    });
+
+    // ── 5. Group courses by semester ────────────────────────────────────────
+    const semesterGroups = [];
+    pdData.semesters?.forEach((sem) => {
+      const codesInSemester = [];
+      sem.courses?.forEach((c) => codesInSemester.push(c.code));
+      sem.categories?.forEach((cat) =>
+        cat.courses?.forEach((c) => codesInSemester.push(c.code))
+      );
+
+      const semesterCourses = [];
+      codesInSemester.forEach((code) => {
+        if (cdMap[code]) semesterCourses.push(cdMap[code]);
+      });
+
+      if (semesterCourses.length > 0) {
+        semesterGroups.push({
+          semester: sem.sem_no,
+          courses: semesterCourses,
+        });
+      }
+    });
+
+    // ── 6. Handle Electives ──────────────────────────────────────────────────
+    const electiveCourses = [];
+
+    pdData.prof_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.professionalElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+
+    pdData.open_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.openElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+
+    pdData.section4?.technicalCompetencyCourses?.forEach((c) => {
+      if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+    });
+
+    // ── 7. Build bookData ────────────────────────────────────────────────────
+    const bookData = {
+      programData: {
+        program_id: pd.program_id,
+        program_name: pd.program_name,
+        scheme_year: pd.scheme_year,
+        version_no: pd.version_no,
+        effective_ay: pd.effective_ay,
+        total_credits: pd.total_credits,
+        pd_data: pd.pd_data,
+      },
+      semesterGroups: semesterGroups,
+      electiveCourses: electiveCourses,
+    };
+
+    // ── 8. Generate PD-ONLY HTML (no front matter, no TOC) ──────────────────
+    console.log("📄 Generating PD-only HTML (no TOC, no front matter)...");
+    const pdHtml = generateCurriculumHTML(bookData, {
+      includeTOC: false,
+      fullBook: false,
+    });
+
+    // ── 9. Convert HTML to PDF ─────────────────────────────────────────────
+    const pdfBuffer = await generateCurriculumPDF(pdHtml);
+
+    // ── 10. Decorate PDF (no front matter offset) ──────────────────────────
+    console.log("🎨 Decorating PD PDF (clean layout)...");
+    const decoratedPdfBuffer = await decoratePDF(pdfBuffer, {
+      frontMatterPageCount: 0,
+      headerText: "",
+      universityName: "",
+    });
+
+    // ── 11. Send the final PDF ─────────────────────────────────────────────
+    const filename = `${pd.program_id}_PD_Only.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+    res.send(decoratedPdfBuffer);
+
+    console.log(`✅ PD‑only PDF downloaded (decorated) : ${filename}`);
+  } catch (error) {
+    console.error("downloadCurriculumBookPD error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate PD‑only PDF.",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Preview Curriculum Book – returns HTML and TOC items for frontend preview
+ */
+export const previewCurriculumBook = async (req, res) => {
+  try {
+    const { programId } = req.params;
+    const adminId = req.admin._id;
+
+    // ── 1. Fetch Program Document ──────────────────────────────────────────
+    const pd = await findPDByIdOrProgramId(programId, adminId);
+
+    if (!pd) {
+      return res.status(404).json({
+        success: false,
+        message: "Program Document not found or unauthorized.",
+      });
+    }
+
+    const pdData = pd.pd_data || {};
+
+    // ── 2. Build map of courseCode → formatted CD (same as download) ──
+    const allCourseCodes = [];
+    pdData.semesters?.forEach((sem) => {
+      sem.courses?.forEach((c) => allCourseCodes.push(c.code));
+      sem.categories?.forEach((cat) =>
+        cat.courses?.forEach((c) => allCourseCodes.push(c.code))
+      );
+    });
+    pdData.prof_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.open_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.professionalElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.openElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => allCourseCodes.push(c.code))
+    );
+    pdData.section4?.technicalCompetencyCourses?.forEach((c) =>
+      allCourseCodes.push(c.code)
+    );
+
+    const uniqueCourseCodes = [...new Set(allCourseCodes)];
+
+    const cds = await CourseDocument.find({
+      courseCode: { $in: uniqueCourseCodes },
+      status: "Approved",
+    })
+      .populate("section1_identity")
+      .populate("section2_outcomes")
+      .populate("section3_syllabus")
+      .populate("section4_resources");
+
+    const formattedCDs = cds.map((cd) => buildFormattedCD(cd));
+    const cdMap = {};
+    formattedCDs.forEach((cd) => {
+      cdMap[cd.courseCode] = cd;
+    });
+
+    // ── 3. Group courses by semester ────────────────────────────────────────
+    const semesterGroups = [];
+    pdData.semesters?.forEach((sem) => {
+      const codesInSemester = [];
+      sem.courses?.forEach((c) => codesInSemester.push(c.code));
+      sem.categories?.forEach((cat) =>
+        cat.courses?.forEach((c) => codesInSemester.push(c.code))
+      );
+
+      const semesterCourses = [];
+      codesInSemester.forEach((code) => {
+        if (cdMap[code]) semesterCourses.push(cdMap[code]);
+      });
+
+      if (semesterCourses.length > 0) {
+        semesterGroups.push({
+          semester: sem.sem_no,
+          courses: semesterCourses,
+        });
+      }
+    });
+
+    // ── 4. Collect elective courses ──────────────────────────────────────────
+    const electiveCourses = [];
+    pdData.prof_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.professionalElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.open_electives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.openElectives?.forEach((grp) =>
+      grp.courses?.forEach((c) => {
+        if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+      })
+    );
+    pdData.section4?.technicalCompetencyCourses?.forEach((c) => {
+      if (cdMap[c.code]) electiveCourses.push(cdMap[c.code]);
+    });
+
+    // ── 5. Build bookData ────────────────────────────────────────────────────
+    const bookData = {
+      programData: {
+        program_id: pd.program_id,
+        program_name: pd.program_name,
+        scheme_year: pd.scheme_year,
+        version_no: pd.version_no,
+        effective_ay: pd.effective_ay,
+        total_credits: pd.total_credits,
+        pd_data: pd.pd_data,
+      },
+      semesterGroups: semesterGroups,
+      electiveCourses: electiveCourses,
+    };
+
+    // ── 6. Generate HTML ──────────────────────────────────────────────────
+    const html = generateCurriculumHTML(bookData, {
+      includeTOC: true,
+      fullBook: true,
+    });
+
+    // ── 7. Build TOC items for sidebar (no page numbers) ──────────────────
+    // We'll build a simple list from bookData (without markers)
+    const tocItems = buildSimpleTOCItems(bookData);
+
+    res.status(200).json({
+      success: true,
+      html,
+      tocItems,
+      bookData,
+    });
+  } catch (error) {
+    console.error("previewCurriculumBook error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate preview.",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Helper: build TOC items without page numbers (for sidebar)
+ * @param {Object} bookData - The book data from the backend
+ * @returns {Array} Array of { level, title, id } objects
+ */
+function buildSimpleTOCItems(bookData) {
+  const { programData, semesterGroups = [], electiveCourses = [] } = bookData || {};
+  const items = [];
+
+  // Always include Overview and Structure
+  items.push({ level: 0, title: "Program Overview", id: "program-overview" });
+  items.push({ level: 0, title: "Program Structure", id: "program-structure" });
+
+  // Process semester groups
+  if (Array.isArray(semesterGroups)) {
+    semesterGroups.forEach((group) => {
+      // Safely get semester number
+      const semNo = group?.semester;
+      if (semNo == null) return;
+
+      items.push({
+        level: 1,
+        title: `Semester ${semNo}`,
+        id: `semester-${semNo}`,
+      });
+
+      // Process courses within the group
+      const courses = group?.courses || [];
+      courses.forEach((cd) => {
+        if (!cd?.courseCode) return;
+        items.push({
+          level: 2,
+          title: `${cd.courseCode} – ${cd.courseTitle || ''}`,
+          id: `course-${cd.courseCode}`,
+        });
+      });
+    });
+  }
+
+  // Process elective courses
+  if (Array.isArray(electiveCourses) && electiveCourses.length > 0) {
+    items.push({ level: 0, title: "Elective Courses", id: "electives" });
+    electiveCourses.forEach((cd) => {
+      if (!cd?.courseCode) return;
+      items.push({
+        level: 1,
+        title: `${cd.courseCode} – ${cd.courseTitle || ''}`,
+        id: `course-${cd.courseCode}`,
+      });
+    });
+  }
+
+  return items;
+}

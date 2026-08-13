@@ -17,8 +17,10 @@ import {
   getCDVersionsForAdmin,
   getGroupedCDReviews,
   getAllPDsForAdmin,
-  // ─── NEW IMPORT ──────────────────────────────────────────────────────────
+  // ─── NEW IMPORTS ──────────────────────────────────────────────────────────
   downloadCurriculumBook,
+  downloadCurriculumBookPD,
+  previewCurriculumBook,
 } from "../controllers/adminController.js";
 import authAdmin from "../middlewares/adminAuth.js";
 
@@ -52,8 +54,12 @@ adminRouter.put("/reviews/cd/:id", processCDReview);
 adminRouter.get("/compiler/readiness/:programId", checkProgramReadiness);
 adminRouter.get("/compiler/compile/:programId", compileCurriculumBook);
 
-// ─── NEW: Download Curriculum Book (Merged with Cover PDF) ──────────────
+// ─── DOWNLOAD ROUTES ──────────────────────────────────────────────────────
 adminRouter.get("/compiler/download/:programId", downloadCurriculumBook);
+adminRouter.get("/compiler/download/pd/:programId", downloadCurriculumBookPD);
+
+// ─── NEW: PREVIEW ROUTE (returns HTML and TOC for frontend) ──────────────
+adminRouter.get("/compiler/preview/:programId", previewCurriculumBook);
 
 // Admin PD List
 adminRouter.get("/pds/all", getAllPDsForAdmin);
