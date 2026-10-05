@@ -4,13 +4,7 @@
     "server.js": {
       "maxDuration": 120,
       "memory": 2048,
-      "includeFiles": [
-        "scripts/**",
-        "models/**",
-        "config/**",
-        "routes/**",
-        "public/**"
-      ]
+      "includeFiles": "{scripts/**,models/**,config/**,routes/**,public/**}"
     }
   },
   "routes": [
