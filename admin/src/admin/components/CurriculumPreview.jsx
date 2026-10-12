@@ -30,7 +30,8 @@ import {
 } from "lucide-react";
 import parse from "html-react-parser";
 import { toast } from "react-hot-toast";
-import html2pdf from "html2pdf.js";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 /* ============================================================
    BASE URL — assets served from the backend /public folder
@@ -64,6 +65,42 @@ const esc = (s) =>
     .replace(/"/g, "&quot;");
 
 /* ============================================================
+   ENCODING REPAIR
+   Fixes "Taylor�s", "L�Hospital�s", "â€™" etc. coming from the data.
+============================================================ */
+
+const fixEncoding = (s) => {
+  if (typeof s !== "string" || !s) return s;
+  return s
+    // classic UTF-8 → Windows-1252 mojibake
+    .replace(/â€™/g, "\u2019")
+    .replace(/â€˜/g, "\u2018")
+    .replace(/â€œ/g, "\u201C")
+    .replace(/â€\u009D/g, "\u201D")
+    .replace(/â€“/g, "\u2013")
+    .replace(/â€”/g, "\u2014")
+    .replace(/Â(?=[\s\u00A0])/g, "")
+    // lost characters (U+FFFD)
+    .replace(/(\p{L})\uFFFD(?=\p{L})/gu, "$1\u2019") // Taylor�s, L�Hospital�s
+    .replace(/(\p{L})\uFFFD(?=[\s.,;:!?)<]|$)/gu, "$1\u2019") // teachers� notes
+    .replace(/(^|[\s(>])\uFFFD(?=\p{L})/gu, "$1\u201C") // �Hello
+    .replace(/\s\uFFFD\s/g, " \u2013 ") // a � b  → a – b
+    .replace(/\uFFFD/g, ""); // anything left
+};
+
+/* deep-clean every string inside a course-document object */
+const deepFix = (v) => {
+  if (typeof v === "string") return fixEncoding(v);
+  if (Array.isArray(v)) return v.map(deepFix);
+  if (v && typeof v === "object") {
+    const out = {};
+    Object.keys(v).forEach((k) => (out[k] = deepFix(v[k])));
+    return out;
+  }
+  return v;
+};
+
+/* ============================================================
    ASSET NORMALISER — resolves backend public assets
 ============================================================ */
 
@@ -89,6 +126,7 @@ const resolveImageFilename = (src) => {
 
 const normaliseAssets = (html, kind = "front_matter") => {
   if (!html || typeof html !== "string") return html || "";
+  html = fixEncoding(html); // ← encoding fix
 
   const rewriteSrc = (src) => {
     const name = resolveImageFilename(src);
@@ -137,6 +175,99 @@ const normaliseAssets = (html, kind = "front_matter") => {
   });
 
   return div.innerHTML;
+};
+
+/* ============================================================
+   FRONT-MATTER ORDER
+   Cover → Chancellor → Vice Chancellor → Pro-Vice Chancellor →
+   Registrar → Director → Head of Department → Acknowledgements →
+   Academic Council & BoS → Table of Contents
+============================================================ */
+
+const fmRank = (name) => {
+  const n = (name || "").toLowerCase();
+  if (/pro[-_ ]?vice|pvc/.test(n)) return 2;
+  if (/vice|^vc/.test(n)) return 1;
+  if (/chancellor/.test(n)) return 0;
+  if (/registrar/.test(n)) return 3;
+  if (/director/.test(n)) return 4;
+  if (/hod|head/.test(n)) return 5;
+  return 99;
+};
+const fmCompare = (a, b) => fmRank(a?.name) - fmRank(b?.name);
+
+/* ============================================================
+   COUNCIL / BoS PAGES
+   • every council page is its own A4 page
+   • a large photo that sits ABOVE the members table goes on its own
+     page, and the table (Members – Board of Studies) starts on a new one
+============================================================ */
+
+const splitCouncilHtml = (html) => {
+  if (!html || typeof document === "undefined") return [html];
+
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  const table = box.querySelector("table");
+  if (!table) return [html];
+
+  const isPhoto = (img) => {
+    if (img.hasAttribute("data-fullpage")) return true;
+    const w = (img.getAttribute("width") || img.style.width || "").trim();
+    const h = (img.getAttribute("height") || img.style.height || "").trim();
+    const wn = parseFloat(w);
+    const hn = parseFloat(h);
+    if (w.endsWith("%") && wn >= 60) return true;
+    if (w && !w.endsWith("%") && wn >= 300) return true;
+    if (h && !h.endsWith("%") && hn >= 200) return true;
+    return false;
+  };
+
+  const photos = Array.from(box.querySelectorAll("img")).filter(
+    (img) =>
+      !table.contains(img) &&
+      img.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING &&
+      isPhoto(img)
+  );
+  if (!photos.length) return [html];
+
+  // climb to the outermost block that holds the photo but not the table
+  let node = photos[photos.length - 1];
+  while (
+    node.parentElement &&
+    node.parentElement !== box &&
+    !node.parentElement.contains(table)
+  ) {
+    node = node.parentElement;
+  }
+
+  const toHtml = (range) => {
+    const d = document.createElement("div");
+    d.appendChild(range.cloneContents());
+    return d.innerHTML;
+  };
+  const r1 = document.createRange();
+  r1.setStart(box, 0);
+  r1.setEndAfter(node);
+  const r2 = document.createRange();
+  r2.setStartAfter(node);
+  r2.setEnd(box, box.childNodes.length);
+
+  const a = toHtml(r1);
+  const b = toHtml(r2);
+  if (!a.trim() || !/<table/i.test(b)) return [html];
+  return [a, b];
+};
+
+const buildCouncilPages = (pages = []) => {
+  const out = [];
+  pages.forEach((p) => {
+    const content = normaliseAssets(p.content || "", "front_matter");
+    splitCouncilHtml(content).forEach((h, i) =>
+      out.push({ key: `${p.name}-${i}`, html: h })
+    );
+  });
+  return out;
 };
 
 /* ============================================================
@@ -677,7 +808,7 @@ export const CD_PREVIEW_STYLES = `
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 14px; gap: 12px;
     font-family: var(--font-ui); color: #cbd5e1;
-    z-index: 20;
+    position: relative; z-index: 40;
   }
   .cpv-toolbar .grp { display: flex; align-items: center; gap: 6px; }
   .cpv-toolbar .grp.grow { flex: 1; min-width: 0; }
@@ -968,7 +1099,7 @@ export const CDRenderer = ({
   institution = "GM University",
   pageLabel = "",
 }) => {
-  const d = cd || {};
+  const d = useMemo(() => deepFix(cd || {}), [cd]);
   const f = (key) => field(d, key);
   const m = meta || {};
 
@@ -1403,70 +1534,6 @@ export const SingleCDPreviewModal = ({ isOpen, onClose, cd, meta, selectedSectio
 };
 
 /* ============================================================
-   FRONT MATTER ORDER
-
-   The backend may return front-matter files in filesystem/alphabetical
-   order. Never rely on that order for the compiled book. The book uses
-   this explicit publication order everywhere: preview, TOC, PDF/print,
-   and standalone HTML export.
-============================================================ */
-
-const FRONT_MATTER_ORDER = {
-  cover: 0,
-  chancellor: 1,
-  vc: 2,
-  pvc: 3,
-  registrar: 4,
-  director: 5,
-  hod: 6,
-  acknowledgement: 7,
-  bos: 8,
-  academic_council: 9,
-  back_cover: 10,
-};
-
-const normaliseFrontMatterKey = (name) => {
-  const value = String(name || "")
-    .toLowerCase()
-    .replace(/\.[^.]+$/, "")
-    .replace(/^\d+[_-]?/, "")
-    .replace(/[-\s]+/g, "_");
-
-  if (value === "cover" || value.includes("front_cover")) return "cover";
-  if (value === "chancellor" || (value.includes("chancellor") && !value.includes("vice"))) return "chancellor";
-  if (value === "pvc" || value.includes("pro_vice_chancellor") || value.includes("provice_chancellor")) return "pvc";
-  if (value === "vc" || value.includes("vice_chancellor")) return "vc";
-  if (value.includes("registrar")) return "registrar";
-  if (value.includes("director")) return "director";
-  if (value === "hod" || value.includes("head_of_department")) return "hod";
-  if (value.includes("acknowledg")) return "acknowledgement";
-  if (value === "bos" || value.includes("board_of_studies")) return "bos";
-  if (value.includes("academic_council")) return "academic_council";
-  if (value === "back" || value.includes("back_cover")) return "back_cover";
-
-  return value;
-};
-
-const frontMatterOrderValue = (page) => {
-  const key = normaliseFrontMatterKey(page?.name);
-  return Object.prototype.hasOwnProperty.call(FRONT_MATTER_ORDER, key)
-    ? FRONT_MATTER_ORDER[key]
-    : 1000;
-};
-
-const sortFrontMatterPages = (pages = []) =>
-  pages
-    .map((page, index) => ({ page, index }))
-    .sort((a, b) => {
-      const orderDiff = frontMatterOrderValue(a.page) - frontMatterOrderValue(b.page);
-      if (orderDiff !== 0) return orderDiff;
-
-      // Keep duplicate/unknown pages stable instead of alphabetically sorting them.
-      return a.index - b.index;
-    })
-    .map(({ page }) => page);
-
-/* ============================================================
    FULL CURRICULUM PREVIEW
 ============================================================ */
 
@@ -1493,38 +1560,45 @@ export const FullCurriculumPreview = ({
   const wrapRef = useRef(null);
   const areaRef = useRef(null);
 
-  /* Split front matter and apply the explicit publication order. */
+  /* Split front matter into ordered buckets */
   const frontMatterSplit = useMemo(() => {
     const cover = [];
     const acknowledgement = [];
     const council = [];
     const other = [];
     const backCover = [];
+    const norm = (s) => (s || "").toLowerCase();
 
     frontMatterPages.forEach((p) => {
-      const key = normaliseFrontMatterKey(p?.name);
-
-      if (key === "back_cover") {
+      const n = norm(p.name);
+      if (n.includes("back_cover") || n.includes("back-cover") || n === "back") {
         backCover.push(p);
-      } else if (key === "cover") {
+      } else if (n === "cover" || n.includes("front_cover")) {
         cover.push(p);
-      } else if (key === "acknowledgement") {
+      } else if (n.includes("acknowledg")) {
         acknowledgement.push(p);
-      } else if (key === "bos" || key === "academic_council") {
+      } else if (
+        n.includes("academic_council") ||
+        n.includes("academic-council") ||
+        n === "bos" ||
+        n.includes("board_of_studies") ||
+        n.includes("board-of-studies")
+      ) {
         council.push(p);
       } else {
         other.push(p);
       }
     });
 
-    return {
-      cover: sortFrontMatterPages(cover),
-      acknowledgement: sortFrontMatterPages(acknowledgement),
-      council: sortFrontMatterPages(council),
-      other: sortFrontMatterPages(other),
-      backCover: sortFrontMatterPages(backCover),
-    };
+    other.sort(fmCompare);
+    return { cover, acknowledgement, council, other, backCover };
   }, [frontMatterPages]);
+
+  /* Council / BoS: one A4 page each (photo page, then BoS table page) */
+  const councilPages = useMemo(
+    () => buildCouncilPages(frontMatterSplit.council),
+    [frontMatterSplit.council]
+  );
 
   const sortedCDs = useMemo(() => {
     return [...selectedCDs].sort((a, b) => {
@@ -1551,13 +1625,13 @@ export const FullCurriculumPreview = ({
 
     items.push({ id: "cpv-top", label: "Cover Page", level: 0, kind: "section" });
 
-    // Front matter follows the publication order, never the backend/filesystem order.
     frontMatterSplit.other.forEach((p) =>
       items.push({
         id: `frontmatter-${p.name}`,
         label: p.displayName || p.name,
         level: 0,
         kind: "front",
+        group: "other",
       })
     );
     frontMatterSplit.acknowledgement.forEach((p) =>
@@ -1566,6 +1640,7 @@ export const FullCurriculumPreview = ({
         label: p.displayName || "Acknowledgement",
         level: 0,
         kind: "front",
+        group: "ack",
       })
     );
     if (frontMatterSplit.council.length > 0) {
@@ -1574,6 +1649,7 @@ export const FullCurriculumPreview = ({
         label: "Academic Council & Board of Studies",
         level: 0,
         kind: "front",
+        group: "council",
       });
     }
 
@@ -1678,36 +1754,47 @@ export const FullCurriculumPreview = ({
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!ddOpen) return;
+    const close = (e) => {
+      if (!e.target.closest || !e.target.closest(".cpv-dd-wrap")) setDdOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [ddOpen]);
+
   const zIn = () => setZoom((z) => Math.min(z + 0.1, 2));
   const zOut = () => setZoom((z) => Math.max(z - 0.1, 0.25));
 
-  const handlePrint = () => window.print();
+  /* Print ALL pages: render the full standalone document in a hidden iframe
+     (the on-screen preview is a fixed overlay, so window.print() only gets one screen). */
+  const handlePrint = () => {
+    const html = generateStandaloneHTML({
+      frontMatterPages,
+      selectedCDs: sortedCDs,
+      selectedSections,
+      programInfo,
+      curriculumConfig,
+    });
+    printHTML(html);
+  };
 
+  /* PDF: clickable TOC + header/footer on every page */
   const handleExportPDF = async () => {
-    if (!wrapRef.current) return;
     setExporting(true);
     setDdOpen(false);
     const tid = toast.loading("Generating PDF…");
     try {
-      await html2pdf()
-        .set({
-          margin: 0,
-          filename: `${programInfo?.programCode || "Curriculum"}_${new Date()
-            .toISOString()
-            .slice(0, 10)}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            logging: false,
-            allowTaint: false,
-            backgroundColor: "#ffffff",
-          },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["css", "legacy"] },
-        })
-        .from(wrapRef.current)
-        .save();
+      await exportCurriculumPDF({
+        frontMatterPages,
+        selectedCDs: sortedCDs,
+        selectedSections,
+        programInfo,
+        curriculumConfig,
+        filename: `${programInfo?.programCode || "Curriculum"}_${new Date()
+          .toISOString()
+          .slice(0, 10)}.pdf`,
+      });
       toast.success("PDF downloaded", { id: tid });
     } catch (err) {
       console.error(err);
@@ -1936,7 +2023,7 @@ export const FullCurriculumPreview = ({
               )}
             </div>
 
-            {/* 2. OTHER FRONT MATTER: Chancellor → VC → PVC → Registrar → Director → HOD */}
+            {/* 2. MESSAGES (Chancellor → VC → PVC → Registrar → Director → HoD) */}
             {frontMatterSplit.other.map((p) => (
               <FrontMatterPage key={p.name} page={p} id={`frontmatter-${p.name}`} />
             ))}
@@ -1946,35 +2033,19 @@ export const FullCurriculumPreview = ({
               <FrontMatterPage key={p.name} page={p} id={`frontmatter-${p.name}`} />
             ))}
 
-            {/* 4. ACADEMIC COUNCIL + BOS (merged page) */}
-            {frontMatterSplit.council.length > 0 && (
-              <div id="cpv-council" className="cpv-doc cpv-doc-fm">
-                {frontMatterSplit.council.map((p, i) => (
-                  <div
-                    key={p.name}
-                    style={{
-                      pageBreakInside:
-                        i < frontMatterSplit.council.length - 1 ? "avoid" : "auto",
-                    }}
-                  >
-                    {i > 0 && (
-                      <div
-                        style={{
-                          borderTop: "1pt solid var(--rule)",
-                          margin: "8mm 0 6mm 0",
-                        }}
-                      />
-                    )}
-                    <div
-                      className="cpv-frontpage"
-                      dangerouslySetInnerHTML={{
-                        __html: normaliseAssets(p.content, "front_matter"),
-                      }}
-                    />
-                  </div>
-                ))}
+            {/* 4. ACADEMIC COUNCIL + BOS (photo page, then BoS table on a new page) */}
+            {councilPages.map((c, i) => (
+              <div
+                key={c.key}
+                id={i === 0 ? "cpv-council" : `cpv-council-${i}`}
+                className="cpv-doc cpv-doc-fm"
+              >
+                <div
+                  className="cpv-frontpage"
+                  dangerouslySetInnerHTML={{ __html: c.html }}
+                />
               </div>
-            )}
+            ))}
 
             {/* 5. TABLE OF CONTENTS */}
             <div className="cpv-doc" id="cpv-toc">
@@ -2154,7 +2225,10 @@ const TOCPage = ({
   };
 
   const frontMatterOther = tocItems.filter(
-    (i) => i.kind === "front" && i.id !== "cpv-council"
+    (i) => i.kind === "front" && i.group === "other"
+  );
+  const frontMatterAck = tocItems.filter(
+    (i) => i.kind === "front" && i.group === "ack"
   );
 
   const ButtonEntry = ({ id, label, className = "", children }) => (
@@ -2186,35 +2260,6 @@ const TOCPage = ({
       <div className="cpv-toc-section">Front Matter</div>
       <ButtonEntry id="cpv-top" label="Cover Page" />
 
-      {acknowledgementCount > 0 && (
-        <button
-          className="cpv-toc-entry cpv-toc-sub"
-          style={{
-            background: "none",
-            border: "none",
-            width: "100%",
-            textAlign: "left",
-            cursor: "pointer",
-            font: "inherit",
-          }}
-          onClick={() => {
-            const firstAck = tocItems.find(
-              (i) => i.kind === "front" && i.label.toLowerCase().includes("ack")
-            );
-            if (firstAck) scrollTo?.(firstAck.id);
-          }}
-        >
-          <span className="title">Acknowledgements</span>
-          <span className="num">
-            {pageFor("cpv-top") ? String(Number(pageFor("cpv-top")) + 1) : ""}
-          </span>
-        </button>
-      )}
-
-      {hasCouncil && (
-        <ButtonEntry id="cpv-council" label="Academic Council & Board of Studies" className="cpv-toc-entry cpv-toc-sub" />
-      )}
-
       {frontMatterOther.map((it) => (
         <ButtonEntry
           key={it.id}
@@ -2223,6 +2268,19 @@ const TOCPage = ({
           className="cpv-toc-entry cpv-toc-sub"
         />
       ))}
+
+      {frontMatterAck.map((it) => (
+        <ButtonEntry
+          key={it.id}
+          id={it.id}
+          label={it.label}
+          className="cpv-toc-entry cpv-toc-sub"
+        />
+      ))}
+
+      {hasCouncil && (
+        <ButtonEntry id="cpv-council" label="Academic Council & Board of Studies" className="cpv-toc-entry cpv-toc-sub" />
+      )}
 
       <ButtonEntry id="cpv-toc" label="Table of Contents" className="cpv-toc-entry cpv-toc-sub" />
 
@@ -2297,7 +2355,7 @@ const TOCPage = ({
 ============================================================ */
 
 const renderCDToHTML = (cd, selectedSections, meta, institution) => {
-  const d = cd || {};
+  const d = deepFix(cd || {});
   const f = (k) => field(d, k);
   const m = meta || {};
   const show = (s, ss) => {
@@ -2322,7 +2380,8 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
     show("section4", "attainmentCalculations") ||
     show("section4", "otherDetails");
 
-  let out = `<div class="cpv-doc" data-cd-code="${esc(code)}" id="course-${esc(code)}-body">`;
+  /* id is "course-<code>" so the exported TOC can jump straight to it */
+  let out = `<div class="cpv-doc" data-cd-code="${esc(code)}" id="course-${esc(code)}">`;
 
   out += `<div class="cpv-runhead">
     <span class="rh-left">${esc(f("schoolTitle") || institution)}</span>
@@ -2551,6 +2610,147 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
   return out;
 };
 
+/* ============================================================
+   EXPORT-ONLY STYLES (HTML + PDF)
+   ------------------------------------------------------------
+   PRINT / "SAVE AS PDF" PAGINATION FIX
+   Root causes (all in the standalone/print path):
+   1. `@page { margin: 0 }` + padding on .cpv-doc: padding only
+      exists at the very top of a document's FIRST page and the
+      very bottom of its LAST page, so every continuation page
+      ran edge-to-edge with no margin and headings/bullets were
+      cut at arbitrary points.
+   2. `.cpv-print-area { position: absolute }` — absolutely
+      positioned boxes do not fragment reliably across printed
+      pages, which clips / mis-breaks long courses.
+   3. `.cpv-runfoot { position: absolute; bottom }` sat on top of
+      the last lines of multi-page course documents.
+   4. Semester divider / back cover min-height (265mm) + doc
+      padding overflowed one A4 page → blank page after them.
+   Fix: real @page margins for body documents (named page), full
+   bleed named page for front matter, static print-area, in-flow
+   footer, and keep-with-next / orphan / widow rules.
+============================================================ */
+
+const HTML_EXPORT_CSS = `
+  html { scroll-behavior: smooth; }
+  .cpv-doc, .cpv-h1 { scroll-margin-top: 12px; }
+  a.cpv-toc-entry { text-decoration: none; color: var(--ink-soft); cursor: pointer; }
+  a.cpv-toc-entry:hover { background: var(--tint); }
+  a.cpv-toc-entry:hover .title { text-decoration: underline; }
+  .cpv-fab {
+    position: fixed; right: 18px; bottom: 18px; z-index: 50;
+    background: #000; color: #fff; text-decoration: none;
+    font: 600 12px var(--font-head); letter-spacing: .5px;
+    padding: 10px 14px; border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  }
+  @media print { .cpv-fab { display: none !important; } }
+
+  /* ── Print pagination (named pages) ───────────────────────── */
+  @page { size: A4 portrait; margin: 0; }
+  @page cpvfm   { size: A4 portrait; margin: 0; }
+  @page cpvbody { size: A4 portrait; margin: 14mm 15mm 16mm 15mm; }
+
+  @media print {
+    /* normal flow, so the browser can fragment the document */
+    .cpv-print-area {
+      position: static !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      width: auto !important;
+    }
+
+    /* Front matter / covers keep their own full-bleed A4 design */
+    .cpv-print-area .cpv-doc.cpv-doc-fm { page: cpvfm; }
+
+    /* Course docs, TOC, semester dividers: the margin now comes from
+       @page so EVERY page of a long document gets the same margins */
+    .cpv-print-area .cpv-doc:not(.cpv-doc-fm) {
+      page: cpvbody;
+      width: 100% !important;
+      max-width: none !important;
+      padding: 0 !important;
+      position: static !important;
+    }
+
+    /* footer flows after the content instead of overlapping it */
+    .cpv-print-area .cpv-doc:not(.cpv-doc-fm) .cpv-runfoot {
+      position: static !important;
+      left: auto !important; right: auto !important; bottom: auto !important;
+      margin-top: 6mm;
+      break-inside: avoid; page-break-inside: avoid;
+    }
+
+    /* one-page blocks must fit inside the 267mm printable height */
+    .cpv-print-area .cpv-sem-divider { min-height: 220mm !important; }
+    .cpv-print-area .cpv-backcover   { min-height: 240mm !important; }
+
+    .cpv-print-area .cpv-frontpage { overflow: visible !important; }
+
+    /* keep headings with the content that follows */
+    .cpv-h1, .cpv-h2, .cpv-h3,
+    .cpv-toc-section,
+    .cpv-body h1, .cpv-body h2, .cpv-body h3, .cpv-body h4 {
+      break-after: avoid !important;
+      page-break-after: avoid !important;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+    .cpv-course-card {
+      break-inside: avoid; page-break-inside: avoid;
+      break-after: avoid;  page-break-after: avoid;
+    }
+
+    /* single bullets / rows / images are never split… */
+    .cpv-body li,
+    .cpv-doc tr,
+    .cpv-doc img,
+    .cpv-note,
+    .cpv-toc-entry {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+    /* …but lists, tables and long paragraphs flow freely */
+    .cpv-body ul, .cpv-body ol, .cpv-body,
+    .cpv-doc table {
+      break-inside: auto !important;
+      page-break-inside: auto !important;
+    }
+    .cpv-body p, .cpv-body li { orphans: 3; widows: 3; }
+    .cpv-doc thead { display: table-header-group; }
+  }
+`;
+
+/* Applied only while rendering the PDF. The PDF header/footer are drawn in
+   the 14mm top/bottom page margins, so each page's content area is 269mm. */
+const PDF_MARGIN_MM = 14;
+const PDF_EXPORT_CSS = `
+  .cpv-pdf-host {
+    position: absolute; top: 0; left: 0; z-index: -1;
+    width: 210mm; background: #fff; pointer-events: none;
+  }
+  .cpv-pdf-root { width: 210mm; margin: 0 !important; padding: 0 !important; background: #fff; }
+  .cpv-pdf-root, .cpv-pdf-root * {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .cpv-pdf-root .cpv-doc {
+    width: 210mm !important; max-width: 210mm !important; min-height: 0 !important;
+    margin: 0 !important; box-shadow: none !important; overflow: visible !important;
+    padding: 4mm 16mm 4mm 16mm !important; background: #fff;
+  }
+  .cpv-pdf-root .cpv-doc.cpv-doc-fm { padding: 0 !important; overflow: hidden !important; }
+  .cpv-pdf-root #cpv-back { padding: 0 !important; }
+  .cpv-pdf-root .cpv-runhead,
+  .cpv-pdf-root .cpv-runfoot { display: none !important; }
+  .cpv-pdf-root .cpv-sem-divider { min-height: 250mm; }
+  .cpv-pdf-root .cpv-cover,
+  .cpv-pdf-root .cpv-backcover { min-height: 285mm; }
+  .cpv-pdf-root .cpv-frontpage img[data-fullpage] { max-height: 285mm !important; }
+  .cpv-pdf-root a.cpv-toc-entry,
+  .cpv-pdf-root a.cpv-toc-entry:visited { color: var(--ink-soft); text-decoration: none; }
+`;
+
 export const generateStandaloneHTML = ({
   frontMatterPages = [],
   selectedCDs = [],
@@ -2576,8 +2776,6 @@ export const generateStandaloneHTML = ({
     grouped.get(s).push(cd);
   });
 
-  // Never use the backend filesystem order here.
-  // Apply the same explicit publication order used by the live preview.
   const cover = [];
   const acknowledgement = [];
   const council = [];
@@ -2585,29 +2783,34 @@ export const generateStandaloneHTML = ({
   const backCover = [];
 
   frontMatterPages.forEach((p) => {
-    const key = normaliseFrontMatterKey(p?.name);
-
-    if (key === "back_cover") backCover.push(p);
-    else if (key === "cover") cover.push(p);
-    else if (key === "acknowledgement") acknowledgement.push(p);
-    else if (key === "bos" || key === "academic_council") council.push(p);
+    const n = (p.name || "").toLowerCase();
+    if (n.includes("back_cover") || n.includes("back-cover") || n === "back") backCover.push(p);
+    else if (n === "cover" || n.includes("front_cover")) cover.push(p);
+    else if (n.includes("acknowledg")) acknowledgement.push(p);
+    else if (
+      n.includes("academic_council") ||
+      n.includes("academic-council") ||
+      n === "bos" ||
+      n.includes("board_of_studies") ||
+      n.includes("board-of-studies")
+    )
+      council.push(p);
     else other.push(p);
   });
+  other.sort(fmCompare);
 
-  // Explicit order: Cover → Chancellor → VC → PVC → Registrar → Director
-  // → HOD → Acknowledgement → BOS → Academic Council → Back Cover.
-  const orderedCover = sortFrontMatterPages(cover);
-  const orderedAcknowledgement = sortFrontMatterPages(acknowledgement);
-  const orderedCouncil = sortFrontMatterPages(council);
-  const orderedOther = sortFrontMatterPages(other);
-  const orderedBackCover = sortFrontMatterPages(backCover);
-
-  const fmPageHTML = (p) => `<div class="cpv-doc cpv-doc-fm" id="frontmatter-${esc(p.name)}">
+  /* forcedId lets the cover / back cover carry the ids the TOC links to */
+  const fmPageHTML = (p, forcedId) => `<div class="cpv-doc cpv-doc-fm" id="${esc(
+    forcedId || `frontmatter-${p.name}`
+  )}">
     <div class="cpv-frontpage">${normaliseAssets(p.content, "front_matter")}</div>
   </div>`;
 
-  const coverHTML = orderedCover.length
-    ? orderedCover.map(fmPageHTML).join("")
+  const fmHTML = (pages, firstId) =>
+    pages.map((p, i) => fmPageHTML(p, i === 0 ? firstId : undefined)).join("");
+
+  const coverHTML = cover.length
+    ? fmHTML(cover, "cpv-top")
     : `
     <div class="cpv-doc cpv-doc-fm" id="cpv-top">
       <div class="cpv-cover">
@@ -2647,18 +2850,23 @@ export const generateStandaloneHTML = ({
       </div>
     </div>`;
 
-  const fmHTML = (pages) => pages.map(fmPageHTML).join("");
-
   const councilHTML =
-    orderedCouncil.length > 0
-      ? `<div class="cpv-doc cpv-doc-fm" id="cpv-council">${orderedCouncil
+    council.length > 0
+      ? buildCouncilPages(council)
           .map(
-            (p, i) =>
-              `${i > 0 ? '<div style="border-top:1pt solid var(--rule);margin:8mm 0 6mm 0;"></div>' : ""}
-               <div class="cpv-frontpage">${normaliseAssets(p.content, "front_matter")}</div>`
+            (c, i) =>
+              `<div class="cpv-doc cpv-doc-fm" id="${
+                i === 0 ? "cpv-council" : `cpv-council-${i}`
+              }"><div class="cpv-frontpage">${c.html}</div></div>`
           )
-          .join("")}</div>`
+          .join("")
       : "";
+
+  /* ── CLICKABLE TOC ───────────────────────────────────────── */
+  const tocLink = (id, inner, cls = "") =>
+    `<a class="cpv-toc-entry cpv-toc-link ${cls}" href="#${esc(id)}">${inner}</a>`;
+  const tocEntry = (id, label, cls = "") =>
+    tocLink(id, `<span class="title">${esc(label)}</span><span class="num"></span>`, cls);
 
   let tocHTML = `<div class="cpv-doc" id="cpv-toc">
     <div class="cpv-runhead">
@@ -2669,40 +2877,39 @@ export const generateStandaloneHTML = ({
     <div class="cpv-toc">
       <div class="cpv-toc-title">Table of Contents</div>
       <div class="cpv-toc-section">Front Matter</div>
-      <div class="cpv-toc-entry"><span class="title">Cover Page</span><span class="num"></span></div>
-      ${orderedOther
-        .map(
-          (p) =>
-            `<div class="cpv-toc-entry cpv-toc-sub"><span class="title">${esc(
-              p.displayName || p.name
-            )}</span><span class="num"></span></div>`
+      ${tocEntry("cpv-top", "Cover Page")}
+      ${other
+        .map((p) => tocEntry(`frontmatter-${p.name}`, p.displayName || p.name, "cpv-toc-sub"))
+        .join("")}
+      ${acknowledgement
+        .map((p) =>
+          tocEntry(`frontmatter-${p.name}`, p.displayName || "Acknowledgements", "cpv-toc-sub")
         )
         .join("")}
-      ${
-        orderedAcknowledgement.length
-          ? `<div class="cpv-toc-entry cpv-toc-sub"><span class="title">Acknowledgements</span><span class="num"></span></div>`
-          : ""
-      }
-      ${
-        orderedCouncil.length
-          ? `<div class="cpv-toc-entry cpv-toc-sub"><span class="title">Academic Council &amp; Board of Studies</span><span class="num"></span></div>`
-          : ""
-      }
+      ${council.length ? tocEntry("cpv-council", "Academic Council & Board of Studies", "cpv-toc-sub") : ""}
+      ${tocEntry("cpv-toc", "Table of Contents", "cpv-toc-sub")}
       <div class="cpv-toc-section">Curriculum Content</div>`;
 
   grouped.forEach((courses, semester) => {
-    tocHTML += `<div class="cpv-toc-entry"><span class="code" style="min-width:auto;margin-right:8px;">${
-      typeof semester === "number" ? `Semester ${semester}` : esc(semester)
-    }</span><span class="num"></span></div>`;
+    tocHTML += tocLink(
+      `semester-${String(semester)}`,
+      `<span class="code" style="min-width:auto;margin-right:8px;">${
+        typeof semester === "number" ? `Semester ${semester}` : esc(semester)
+      }</span><span class="num"></span>`
+    );
     courses.forEach((cd) => {
-      tocHTML += `<div class="cpv-toc-entry cpv-toc-sub"><span><span class="code">${esc(
-        cd.courseCode
-      )}</span><span class="title">${esc(cd.courseTitle)}</span></span><span class="num"></span></div>`;
+      tocHTML += tocLink(
+        `course-${cd.courseCode}`,
+        `<span><span class="code">${esc(cd.courseCode)}</span><span class="title">${esc(
+          cd.courseTitle
+        )}</span></span><span class="num"></span>`,
+        "cpv-toc-sub"
+      );
     });
   });
 
   tocHTML += `<div class="cpv-toc-section">Back Matter</div>
-      <div class="cpv-toc-entry"><span class="title">Back Cover</span><span class="num">Last</span></div>
+      ${tocEntry("cpv-back", "Back Cover")}
     </div>
     <div class="cpv-runfoot"><span>${esc(
       institution
@@ -2749,8 +2956,8 @@ export const generateStandaloneHTML = ({
     });
   });
 
-  const backHTML = orderedBackCover.length
-    ? fmHTML(orderedBackCover)
+  const backHTML = backCover.length
+    ? fmHTML(backCover, "cpv-back")
     : `<div class="cpv-doc" id="cpv-back"><div class="cpv-backcover">
         <div class="bc-title">${esc(institution)}</div>
         <div class="bc-sub">End of Curriculum — ${esc(
@@ -2761,6 +2968,26 @@ export const generateStandaloneHTML = ({
       )}</div>
       </div></div>`;
 
+  /* Fills TOC page numbers + footer page labels when the HTML is opened */
+  const pageScript = `
+(function () {
+  var docs = [].slice.call(document.querySelectorAll('.cpv-doc'));
+  function pageOf(el) {
+    while (el && !(el.classList && el.classList.contains('cpv-doc'))) el = el.parentElement;
+    return el ? docs.indexOf(el) + 1 : '';
+  }
+  document.querySelectorAll('a.cpv-toc-link').forEach(function (a) {
+    var id = decodeURIComponent(a.getAttribute('href').slice(1));
+    var t = document.getElementById(id);
+    var n = a.querySelector('.num');
+    if (t && n) n.textContent = pageOf(t);
+  });
+  docs.forEach(function (d, i) {
+    var f = d.querySelector('.rf-page');
+    if (f) f.textContent = 'Page ' + (i + 1);
+  });
+})();`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2768,6 +2995,7 @@ export const generateStandaloneHTML = ({
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${esc(doctype)} — ${esc(programInfo?.programName || "Curriculum")}</title>
   <style>${CD_PREVIEW_STYLES}</style>
+  <style>${HTML_EXPORT_CSS}</style>
   <style>
     body { margin: 0; background: var(--page-bg); font-family: var(--font-body); }
     .cpv-print-area { padding: 30px 20px 60px 20px; }
@@ -2776,15 +3004,403 @@ export const generateStandaloneHTML = ({
 <body>
   <div class="cpv-print-area">
     ${coverHTML}
-    ${fmHTML(orderedOther)}
-    ${fmHTML(orderedAcknowledgement)}
+    ${fmHTML(other)}
+    ${fmHTML(acknowledgement)}
     ${councilHTML}
     ${tocHTML}
     ${bodyHTML}
     ${backHTML}
   </div>
+  <a href="#cpv-toc" class="cpv-fab no-print">☰ Contents</a>
+  <script>${pageScript}<\/script>
 </body>
 </html>`;
+};
+
+/* ============================================================
+   PDF EXPORT
+   ------------------------------------------------------------
+   Own pagination (no more one-giant-canvas slicing):
+   • every page is cut ONLY between rows / paragraphs / headings
+   • headings are kept together with the content that follows
+   • images are fully loaded before anything is measured
+   • each document is rendered separately (no canvas-size limit)
+   • clickable TOC + bookmarks + header/footer on content pages
+============================================================ */
+
+/* Front-matter pages that already fit on one A4 are placed full-page
+   (no header/footer) so their own design is never squeezed.
+   Set to false to put header/footer on those pages as well. */
+const PDF_FRONT_MATTER_FULL_PAGE = true;
+
+const PDF_PAGE_W = 210;
+const PDF_PAGE_H = 297;
+const PDF_FIT_TOLERANCE = 1.06; // up to 6% too tall → shrink onto one page
+const PDF_MAX_ATOM_MM = 70;     // blocks taller than this are allowed to split
+
+const PDF_ATOM_SEL =
+  "tr, p, li, h1, h2, h3, h4, h5, .cpv-h1, .cpv-h2, .cpv-h3, .cpv-course-card, .cpv-sig, .cpv-note, img, .cpv-toc-entry, .cpv-toc-section";
+const PDF_HEADING_SEL =
+  "h1, h2, h3, h4, h5, .cpv-h1, .cpv-h2, .cpv-h3, .cpv-toc-section";
+const PDF_BLOCK_CHILD_SEL =
+  "div, p, table, ul, ol, li, h1, h2, h3, h4, h5, tr, blockquote, pre, img";
+
+export const exportCurriculumPDF = async ({
+  frontMatterPages = [],
+  selectedCDs = [],
+  selectedSections,
+  programInfo,
+  curriculumConfig,
+  filename = "Curriculum.pdf",
+}) => {
+  const institution = curriculumConfig?.university || "GM University";
+  const doctype = curriculumConfig?.title || "Curriculum Book";
+  const programCode = programInfo?.programCode || "";
+  const programName = programInfo?.programName || "";
+
+  // Reuse the standalone HTML so the PDF has the same clickable TOC
+  const html = generateStandaloneHTML({
+    frontMatterPages,
+    selectedCDs,
+    selectedSections,
+    programInfo,
+    curriculumConfig,
+  });
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const area = parsed.querySelector(".cpv-print-area");
+
+  // Off-screen (behind the preview) host — must be attached to be measured
+  const host = document.createElement("div");
+  host.className = "cpv-pdf-host";
+  const style = document.createElement("style");
+  style.textContent = CD_PREVIEW_STYLES + PDF_EXPORT_CSS;
+  const root = document.createElement("div");
+  root.className = "cpv-print-area cpv-pdf-root";
+  root.innerHTML = area.innerHTML;
+  host.appendChild(style);
+  host.appendChild(root);
+  document.body.appendChild(host);
+
+  const drawHeaderFooter = (pdf, page, total, courseCode = "") => {
+    const W = PDF_PAGE_W;
+    const H = PDF_PAGE_H;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(String(institution).toUpperCase(), 15, 8.5);
+    if (courseCode) {
+      // course pages: show the course code in the right corner of the header
+      pdf.setFont("helvetica", "bold");
+      pdf.text(String(courseCode), W - 15, 8.5, { align: "right" });
+    } else {
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${doctype}${programName ? " | " + programName : ""}`, W - 15, 8.5, {
+        align: "right",
+      });
+    }
+    pdf.setFont("helvetica", "normal");
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.3);
+    pdf.line(15, 10.5, W - 15, 10.5);
+
+    pdf.line(15, H - 11, W - 15, H - 11);
+    pdf.setTextColor(80, 80, 80);
+    pdf.text(`${institution} | Official Curriculum`, 15, H - 7);
+    pdf.text(`Page ${page} of ${total}`, W / 2, H - 7, { align: "center" });
+    pdf.text(programCode, W - 15, H - 7, { align: "right" });
+  };
+
+  try {
+    /* ── 1. Fonts + images must be fully ready BEFORE measuring ───────── */
+    if (document.fonts && document.fonts.ready) {
+      try {
+        await document.fonts.ready;
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    await Promise.all(
+      Array.from(root.querySelectorAll("img")).map((img) => {
+        img.loading = "eager"; // lazy images would never load off-screen
+        if (img.complete) return null;
+        return new Promise((resolve) => {
+          img.addEventListener("load", resolve, { once: true });
+          img.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 10000);
+        });
+      })
+    );
+
+    // Placeholder digits so the TOC keeps the same height once numbers are filled
+    root
+      .querySelectorAll("a.cpv-toc-link .num")
+      .forEach((n) => (n.textContent = "000"));
+
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /* ── 2. Geometry ───────────────────────────────────────────────────── */
+    const rootW = root.getBoundingClientRect().width;
+    const mmPerPx = PDF_PAGE_W / rootW;
+    const contentHmm = PDF_PAGE_H - PDF_MARGIN_MM * 2;
+    const pageHpx = contentHmm / mmPerPx;
+    const fullHpx = PDF_PAGE_H / mmPerPx;
+    const maxAtomPx = PDF_MAX_ATOM_MM / mmPerPx;
+
+    /* Choose page-break positions that never cut through a row,
+       paragraph or heading (and never strand a heading at a page end). */
+    const computeBreaks = (el, rect, Hc) => {
+      const atoms = [];
+      const push = (node, heading) => {
+        const r = node.getBoundingClientRect();
+        const top = r.top - rect.top;
+        const bottom = r.bottom - rect.top;
+        const h = bottom - top;
+        if (h < 1 || h > maxAtomPx) return;
+        atoms.push({ top, bottom, heading });
+      };
+      el.querySelectorAll(PDF_ATOM_SEL).forEach((n) =>
+        push(n, n.matches(PDF_HEADING_SEL))
+      );
+      el.querySelectorAll("div, blockquote, pre").forEach((n) => {
+        if (!n.querySelector(PDF_BLOCK_CHILD_SEL) && n.textContent.trim()) {
+          push(n, false);
+        }
+      });
+
+      const breaks = [0];
+      let start = 0;
+      let guard = 0;
+      while (Hc - start > pageHpx + 1 && guard++ < 2000) {
+        let y = start + pageHpx;
+        for (let i = 0; i < 60; i++) {
+          let moved = false;
+          // 1) don't cut through an atom
+          for (const a of atoms) {
+            if (a.top > start + 2 && a.top < y - 0.5 && a.bottom > y + 0.5) {
+              y = a.top;
+              moved = true;
+            }
+          }
+          // 2) keep headings together with what follows
+          for (const a of atoms) {
+            if (
+              a.heading &&
+              a.top > start + 2 &&
+              a.top < y &&
+              a.bottom <= y + 0.5 &&
+              y - a.bottom < 24
+            ) {
+              y = a.top;
+              moved = true;
+            }
+          }
+          if (!moved) break;
+        }
+        if (y - start < pageHpx * 0.25) y = start + pageHpx; // nothing sensible → hard cut
+        breaks.push(y);
+        start = y;
+      }
+      if (Hc - start >= 2 || breaks.length === 1) breaks.push(Hc);
+      else breaks[breaks.length - 1] = Hc;
+      return breaks;
+    };
+
+    const docEls = Array.from(root.children).filter((el) =>
+      el.classList.contains("cpv-doc")
+    );
+
+    const docs = docEls.map((el, idx) => {
+      const rect = el.getBoundingClientRect();
+      const H = rect.height;
+      const isFirst = idx === 0;
+      const isLast = idx === docEls.length - 1;
+      const isFm = el.classList.contains("cpv-doc-fm");
+
+      let mode = "paged"; // paged | cover | full
+      if (isFirst || isLast) mode = "cover";
+      else if (PDF_FRONT_MATTER_FULL_PAGE && isFm && H <= fullHpx * 1.02) mode = "full";
+
+      let fit = 1;
+      let slices;
+      if (mode === "cover" || mode === "full") {
+        fit = Math.min(1, fullHpx / H);
+        slices = [{ y0: 0, y1: H }];
+      } else if (H <= pageHpx * PDF_FIT_TOLERANCE) {
+        fit = Math.min(1, pageHpx / H);
+        slices = [{ y0: 0, y1: H }];
+      } else {
+        const padBottom = parseFloat(getComputedStyle(el).paddingBottom) || 0;
+        const br = computeBreaks(el, rect, Math.max(1, H - padBottom));
+        slices = br.slice(0, -1).map((y0, i) => ({ y0, y1: br[i + 1] }));
+      }
+      return { el, rect, H, mode, fit, slices };
+    });
+
+    let cursor = 1;
+    docs.forEach((d) => {
+      d.firstPage = cursor;
+      cursor += d.slices.length;
+    });
+    const totalPages = cursor - 1;
+    const infoOf = new Map(docs.map((d) => [d.el, d]));
+
+    const kOf = (info) => mmPerPx * info.fit;
+    const xOf = (info) => (PDF_PAGE_W - PDF_PAGE_W * info.fit) / 2;
+    const yTopOf = (info) => {
+      if (info.mode === "paged") return PDF_MARGIN_MM;
+      if (info.mode === "full") return 0;
+      return Math.max(0, (PDF_PAGE_H - info.H * kOf(info)) / 2); // cover / back: centred
+    };
+
+    /* ── 3. TOC: real PDF page numbers + clickable rectangles ─────────── */
+    const idMap = new Map();
+    root.querySelectorAll("[id]").forEach((e) => {
+      if (!idMap.has(e.id)) idMap.set(e.id, e);
+    });
+
+    const locate = (el) => {
+      const docEl = el.closest(".cpv-doc");
+      const info = docEl && infoOf.get(docEl);
+      if (!info) return null;
+      const top = el.getBoundingClientRect().top - info.rect.top;
+      let si = info.slices.findIndex((s) => top >= s.y0 - 0.5 && top < s.y1 - 0.5);
+      if (si < 0) si = top < 0 ? 0 : info.slices.length - 1;
+      return { info, si };
+    };
+
+    const links = [];
+    root.querySelectorAll("a.cpv-toc-link").forEach((a) => {
+      const id = (a.getAttribute("href") || "").replace(/^#/, "");
+      const target = id && idMap.get(id);
+      if (!target) return;
+      const tl = locate(target);
+      const al = locate(a);
+      if (!tl || !al) return;
+
+      const targetPage = tl.info.firstPage + tl.si;
+      const fromPage = al.info.firstPage + al.si;
+      const label = Array.from(a.children)
+        .filter((c) => !c.classList.contains("num"))
+        .map((c) => c.textContent)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const r = a.getBoundingClientRect();
+      const k = kOf(al.info);
+      const s = al.info.slices[al.si];
+      links.push({
+        label,
+        fromPage,
+        targetPage,
+        x: xOf(al.info) + (r.left - al.info.rect.left) * k,
+        y: yTopOf(al.info) + (r.top - al.info.rect.top - s.y0) * k,
+        w: r.width * k,
+        h: r.height * k,
+      });
+
+      const num = a.querySelector(".num");
+      if (num) num.textContent = String(targetPage);
+    });
+
+    /* ── 4. Render each document separately → slice → add pages ───────── */
+    const pdf = new jsPDF({
+      unit: "mm",
+      format: "a4",
+      orientation: "portrait",
+      compress: true,
+    });
+
+    let pageNo = 0;
+    for (const info of docs) {
+      const { el, H, slices } = info;
+      const k = kOf(info);
+
+      const scale = Math.max(
+        0.75,
+        Math.min(2, 30000 / H, Math.sqrt(1.2e8 / (rootW * H)))
+      );
+
+      const canvas = await html2canvas(el, {
+        scale,
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        backgroundColor: "#ffffff",
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: Math.max(window.innerWidth, Math.ceil(rootW) + 40),
+        // keep the clone tiny: only this document (+ <head> styles) is cloned
+        ignoreElements: (n) =>
+          (n.parentElement === document.body && n !== host) ||
+          (n.parentElement === root && n !== el),
+      });
+      const kY = canvas.height / H;
+
+      for (let si = 0; si < slices.length; si++) {
+        const s = slices[si];
+        const sy = Math.round(s.y0 * kY);
+        const sh = Math.max(
+          1,
+          Math.min(canvas.height - sy, Math.round((s.y1 - s.y0) * kY))
+        );
+
+        const part = document.createElement("canvas");
+        part.width = canvas.width;
+        part.height = sh;
+        const ctx = part.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, part.width, part.height);
+        ctx.drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, canvas.width, sh);
+
+        if (pageNo > 0) pdf.addPage();
+        pageNo += 1;
+
+        pdf.addImage(
+          part.toDataURL("image/jpeg", 0.95),
+          "JPEG",
+          xOf(info),
+          yTopOf(info),
+          PDF_PAGE_W * info.fit,
+          (s.y1 - s.y0) * k,
+          undefined,
+          "FAST"
+        );
+
+        if (info.mode === "paged") {
+          const cdCode = el.getAttribute("data-cd-code") || "";
+          drawHeaderFooter(pdf, pageNo, totalPages, cdCode === "—" ? "" : cdCode);
+        }
+
+        part.width = 0;
+        part.height = 0;
+      }
+
+      canvas.width = 0;
+      canvas.height = 0;
+      await new Promise((r) => setTimeout(r, 0)); // let the UI breathe
+    }
+
+    /* ── 5. Clickable TOC links + bookmarks ───────────────────────────── */
+    links.forEach((l) => {
+      pdf.setPage(l.fromPage);
+      pdf.link(l.x, l.y, l.w, l.h, { pageNumber: l.targetPage });
+    });
+
+    try {
+      if (pdf.outline && pdf.outline.add) {
+        links.forEach((l) =>
+          pdf.outline.add(null, l.label, { pageNumber: l.targetPage })
+        );
+      }
+    } catch (e) {
+      console.warn("PDF outline not supported:", e);
+    }
+
+    pdf.save(filename);
+  } finally {
+    if (host.parentNode) host.parentNode.removeChild(host);
+  }
 };
 
 /* ============================================================
@@ -2803,6 +3419,10 @@ export const downloadHTML = (html, filename) => {
   URL.revokeObjectURL(url);
 };
 
+/* Opens the standalone document in a new window and opens the browser's
+   Print dialog (Save as PDF). Same signature / behaviour as before; it now
+   also (a) forces lazy images to load and waits for them, so images are not
+   blank in the PDF, and (b) uses the filename as the default "Save as" name. */
 export const downloadPDF = (html, filename) => {
   const w = window.open("", "_blank");
   if (!w) {
@@ -2811,7 +3431,100 @@ export const downloadPDF = (html, filename) => {
   }
   w.document.write(html);
   w.document.close();
-  w.onload = () => setTimeout(() => w.print(), 500);
+
+  try {
+    if (filename) w.document.title = String(filename).replace(/\.pdf$/i, "");
+  } catch (_) {
+    /* ignore */
+  }
+
+  const printWhenReady = () => {
+    const imgs = Array.from(w.document.images || []);
+    imgs.forEach((img) => {
+      img.loading = "eager"; // lazy images would stay blank in print
+    });
+    const ready = Promise.race([
+      Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? null
+            : new Promise((resolve) => {
+                img.addEventListener("load", resolve, { once: true });
+                img.addEventListener("error", resolve, { once: true });
+              })
+        )
+      ),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+    ready.then(() =>
+      setTimeout(() => {
+        try {
+          w.focus();
+          w.print();
+        } catch (err) {
+          console.error(err);
+          toast.error("Print failed");
+        }
+      }, 300)
+    );
+  };
+
+  if (w.document.readyState === "complete") printWhenReady();
+  else w.onload = printWhenReady;
+};
+
+/* Prints a full standalone document (all pages) through a hidden iframe */
+export const printHTML = (html) => {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText =
+    "position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;";
+  document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  };
+
+  const win = iframe.contentWindow;
+  const doc = iframe.contentDocument || win.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // make sure every image is loaded before the print dialog opens
+  Array.from(doc.images).forEach((img) => {
+    img.loading = "eager";
+  });
+  const imagesReady = Promise.race([
+    Promise.all(
+      Array.from(doc.images).map((img) =>
+        img.complete
+          ? null
+          : new Promise((resolve) => {
+              img.addEventListener("load", resolve, { once: true });
+              img.addEventListener("error", resolve, { once: true });
+            })
+      )
+    ),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]);
+
+  imagesReady.then(() =>
+    setTimeout(() => {
+      try {
+        win.addEventListener("afterprint", () => setTimeout(cleanup, 500), {
+          once: true,
+        });
+        win.focus();
+        win.print();
+        setTimeout(cleanup, 120000); // safety net
+      } catch (err) {
+        console.error(err);
+        toast.error("Print failed");
+        cleanup();
+      }
+    }, 300)
+  );
 };
 
 /* ============================================================

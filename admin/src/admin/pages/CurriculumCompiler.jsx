@@ -28,9 +28,7 @@ import {
   SortAsc,
   RefreshCw,
   FileCode,
-  Save,
-  RotateCcw,
-  AlertTriangle,
+  ImagePlus,
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
@@ -45,6 +43,36 @@ import {
   downloadHTML,
   downloadPDF,
 } from "../components/CurriculumPreview";
+
+/* ============================================================
+   LOGGER
+============================================================ */
+
+const LOG_PREFIX = "[CurriculumCompiler]";
+const log = (...args) => console.log(LOG_PREFIX, ...args);
+const logErr = (...args) => console.error(LOG_PREFIX, ...args);
+const logWarn = (...args) => console.warn(LOG_PREFIX, ...args);
+
+/* ============================================================
+   HOISTED HELPERS
+============================================================ */
+
+function ToolbarBtn({ active, onClick, title, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`p-2 rounded-md transition-colors ${
+        active
+          ? "bg-amber-100 text-amber-800"
+          : "text-stone-600 hover:bg-stone-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 /* ============================================================
    STATUS CONFIG
@@ -64,6 +92,67 @@ const DEFAULT_FILTERS = {
   sortBy: "semester-asc",
 };
 
+/* Semester helpers — work whether the API sends 3 or "3".
+   Returns a number for numeric semesters, otherwise 999 (sorted last). */
+const semOrder = (s) => {
+  if (s === null || s === undefined || s === "") return 999;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 999;
+};
+const isNumericSem = (s) => semOrder(s) !== 999;
+
+/* ============================================================
+   IMAGE PATH HELPERS  (now with cache-busting)
+============================================================ */
+
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  "http://localhost:5000";
+
+log("API_BASE =", API_BASE);
+
+// Absolute-ize + cache-bust every <img src>
+const absolutizeImageUrls = (html) => {
+  if (!html) return "";
+  return html.replace(
+    /(<img\b[^>]*?\bsrc\s*=\s*["'])([^"']+)(["'])/gi,
+    (match, pre, src, post) => {
+      if (src.startsWith("data:")) return match;
+
+      // Already absolute -> refresh cache-buster
+      if (/^(https?:)?\/\//i.test(src)) {
+        const base = src.split(/[?#]/)[0];
+        return `${pre}${base}?v=${Date.now()}${post}`;
+      }
+
+      // Relative -> absolute, then add cache-buster
+      const cleaned = src.replace(/^(\.\.?\/)+/, "");
+      const path = cleaned.startsWith("templates/")
+        ? cleaned
+        : `templates/front_matter/images/${cleaned.replace(/^images\//, "")}`;
+      const base = `${API_BASE}/${path}`.split(/[?#]/)[0];
+      return `${pre}${base}?v=${Date.now()}${post}`;
+    }
+  );
+};
+
+// Relativize + strip cache-buster before saving to disk
+const relativateImageUrls = (html) => {
+  if (!html) return "";
+  const baseEsc = API_BASE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`${baseEsc}/templates/front_matter/images/`, "g");
+
+  let out = html.replace(re, "../images/");
+
+  // Remove any ?v=… we added for display
+  out = out.replace(
+    /(<img\b[^>]*?\bsrc\s*=\s*["'])([^"']+?)(\?v=\d+)(["'])/gi,
+    (_m, pre, src, _v, post) => `${pre}${src}${post}`
+  );
+
+  return out;
+};
+
 /* ============================================================
    PROGRESS BAR
 ============================================================ */
@@ -80,26 +169,594 @@ const ProgressBar = ({ pct }) => (
 );
 
 /* ============================================================
-   HELPERS FOR FRONT MATTER EDITOR
+   CLEAN EDITOR MODAL
 ============================================================ */
 
-const fmBasename = (src) => {
-  if (!src) return "";
-  const clean = src.split("?")[0].split("#")[0];
-  return clean.split("/").pop() || "";
-};
+const CleanEditorModal = ({
+  isOpen,
+  onClose,
+  pageName,
+  htmlContent,
+  onSave,
+  isSaving,
+  frontMatterPages,
+  getDisplayName,
+  onPageSelect,
+  currentPage,
+  axios,
+  adminToken,
+}) => {
+  log("CleanEditorModal render", {
+    isOpen,
+    pageName,
+    currentPage: currentPage?.name,
+    pagesCount: frontMatterPages?.length,
+    contentLength: htmlContent?.length,
+    hasAxios: !!axios,
+    hasToken: !!adminToken,
+  });
 
-const fmEscapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const editorRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const pendingImageTargetRef = useRef(null);
+  const [activeFormats, setActiveFormats] = useState({});
+  const [colorOpen, setColorOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [imageBoxes, setImageBoxes] = useState([]);
 
-const fmDisplaySrc = (src) => {
-  if (!src) return "";
-  if (/^(https?:|data:|blob:)/.test(src)) return src;
-  const filename = fmBasename(src);
-  if (!filename) return src;
-  const base =
-    (typeof import.meta !== "undefined" && import.meta.env?.VITE_BASE_URL) ||
-    "http://localhost:5000";
-  return `${base}/templates/front_matter/images/${filename}`;
+  const computeImageBoxes = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const editorRect = editor.getBoundingClientRect();
+    const imgs = editor.querySelectorAll("img");
+    const boxes = [];
+    imgs.forEach((img, idx) => {
+      const r = img.getBoundingClientRect();
+      boxes.push({
+        id: idx,
+        top: r.top - editorRect.top,
+        left: r.left - editorRect.left,
+        width: r.width,
+        height: r.height,
+        src: img.getAttribute("src") || "",
+        el: img,
+      });
+    });
+    log("computeImageBoxes found", boxes.length, "images");
+    setImageBoxes(boxes);
+  }, []);
+
+  // Sync htmlContent -> editor (with guard so we don't stomp on typing)
+  useEffect(() => {
+    if (!isOpen || !editorRef.current) return;
+
+    const displayHtml = absolutizeImageUrls(htmlContent || "");
+    const lastLoaded = editorRef.current.dataset.lastLoadedContent || "";
+    const incomingKey = `${currentPage?.name}::${htmlContent || ""}`;
+
+    if (lastLoaded === incomingKey) {
+      log("Skipping innerHTML reset — content unchanged for this page");
+      return;
+    }
+
+    log("Setting editor innerHTML, length:", displayHtml.length);
+    editorRef.current.innerHTML = displayHtml;
+    editorRef.current.dataset.lastLoadedContent = incomingKey;
+
+    setTimeout(() => computeImageBoxes(), 0);
+  }, [isOpen, htmlContent, currentPage, computeImageBoxes]);
+
+  // Scroll / resize recompute
+  useEffect(() => {
+    if (!isOpen) return;
+    const editor = editorRef.current;
+    const scroller = editor?.parentElement;
+    const onScroll = () => computeImageBoxes();
+    const onResize = () => computeImageBoxes();
+
+    scroller?.addEventListener("scroll", onScroll);
+    window.addEventListener("resize", onResize);
+    return () => {
+      scroller?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [isOpen, computeImageBoxes]);
+
+  const refreshFormats = () => {
+    try {
+      setActiveFormats({
+        bold: document.queryCommandState("bold"),
+        italic: document.queryCommandState("italic"),
+        underline: document.queryCommandState("underline"),
+        justifyLeft: document.queryCommandState("justifyLeft"),
+        justifyCenter: document.queryCommandState("justifyCenter"),
+        justifyRight: document.queryCommandState("justifyRight"),
+      });
+    } catch (e) {
+      logWarn("refreshFormats failed", e);
+    }
+  };
+
+  const exec = (cmd, val = null) => {
+    log("exec command:", cmd, val);
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val);
+    refreshFormats();
+  };
+
+  /* ---------- IMAGE HANDLING ---------- */
+
+  const openInsertImagePicker = () => {
+    log("openInsertImagePicker — opening file dialog");
+    pendingImageTargetRef.current = { kind: "insert", img: null };
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    } else {
+      logErr("fileInputRef.current is null!");
+    }
+  };
+
+  const openReplaceImagePicker = (imgEl) => {
+    log("openReplaceImagePicker — target:", imgEl?.getAttribute?.("src"));
+    if (uploading) {
+      logWarn("Upload already in progress, ignoring");
+      return;
+    }
+    pendingImageTargetRef.current = { kind: "replace", img: imgEl };
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    } else {
+      logErr("fileInputRef.current is null!");
+    }
+  };
+
+  const handleFileChosen = async (e) => {
+    const file = e.target.files?.[0];
+    log("handleFileChosen — file:", file?.name, file?.type, file?.size);
+    if (!file) {
+      logWarn("No file chosen");
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      logWarn("Not an image");
+      toast.error("Please choose an image file");
+      return;
+    }
+
+    const target = pendingImageTargetRef.current || { kind: "insert", img: null };
+    log("Target:", target.kind, "img:", target.img?.tagName);
+    pendingImageTargetRef.current = null;
+
+    const originalName = target.img
+      ? (target.img.getAttribute("src") || "").split("/").pop().split("?")[0]
+      : null;
+    log("originalName from src:", originalName);
+
+    const ext = (file.name.split(".").pop() || "png").toLowerCase();
+    const baseName = originalName
+      ? originalName.replace(/\.[^.]+$/, "")
+      : `img_${Date.now()}`;
+    const filename = `${baseName}.${ext}`;
+    log("Computed upload filename:", filename);
+
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("image", file);
+      form.append("pageName", currentPage?.name || "");
+      form.append("filename", filename);
+      if (originalName && originalName !== filename) {
+        form.append("oldFilename", originalName);
+        log("Attached oldFilename:", originalName);
+      }
+
+      // ✅ Matches backend: POST /api/admin/compiler/frontmatter/image
+      const url = "/api/admin/compiler/frontmatter/image";
+      log("POST", url, "with form fields:", {
+        pageName: currentPage?.name,
+        filename,
+      });
+
+      const { data } = await axios.post(url, form, {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      log("Upload response:", data);
+
+      if (!data?.success) throw new Error(data?.message || "Upload failed");
+
+      const baseUrl =
+        data.url || `${API_BASE}/templates/front_matter/images/${data.filename}`;
+      const absoluteUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
+      log("Absolute URL to set:", absoluteUrl);
+
+      if (target.kind === "replace" && target.img && target.img.parentNode) {
+        log("Replacing existing img src");
+        target.img.setAttribute("src", absoluteUrl);
+        toast.success("Image replaced");
+      } else {
+        log("Inserting new img at caret");
+        const editor = editorRef.current;
+        if (editor) {
+          editor.focus();
+          const sel = window.getSelection();
+          if (!sel || sel.rangeCount === 0) {
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+          document.execCommand(
+            "insertHTML",
+            false,
+            `<img src="${absoluteUrl}" alt="" style="max-width:100%;height:auto;" />`
+          );
+        } else {
+          logErr("editorRef.current is null on insert");
+        }
+        toast.success("Image inserted");
+      }
+
+      refreshFormats();
+      setTimeout(() => computeImageBoxes(), 50);
+    } catch (err) {
+      logErr("Image upload failed:", err);
+      logErr("Status:", err?.response?.status);
+      logErr("Response data:", err?.response?.data);
+      toast.error(
+        err?.response?.data?.message || err.message || "Failed to upload image"
+      );
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleEditorClick = (e) => {
+    const t = e.target;
+    if (t && t.tagName === "IMG") {
+      log("Editor clicked on IMG — opening replace picker");
+      openReplaceImagePicker(t);
+    }
+  };
+
+  const handleSave = () => {
+    const rawHtml = editorRef.current?.innerHTML || "";
+    log("handleSave — raw innerHTML length:", rawHtml.length);
+    const portableHtml = relativateImageUrls(rawHtml);
+    log("Portable (relatived) HTML length:", portableHtml.length);
+    onSave({ name: currentPage?.name, content: portableHtml });
+  };
+
+  const pages = frontMatterPages || [];
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-stone-900/60 backdrop-blur-sm flex items-stretch sm:items-center justify-center sm:p-4">
+      <div className="bg-white w-full sm:max-w-6xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col h-full sm:h-[92vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-stone-200 bg-stone-50 flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 bg-amber-100 text-amber-800 rounded-lg flex-shrink-0">
+              <Edit size={16} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-black text-stone-800 truncate">
+                Edit Front Matter Pages
+              </h2>
+              <p className="text-[11px] text-stone-500 truncate">
+                {pageName || "Select a page on the left"}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              log("Close button clicked");
+              onClose();
+            }}
+            className="p-2 rounded-lg hover:bg-stone-200 text-stone-500 flex-shrink-0"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex flex-col md:flex-row flex-1 min-h-0">
+          {/* LEFT: page list */}
+          <aside className="md:w-64 md:flex-shrink-0 border-b md:border-b-0 md:border-r border-stone-200 bg-stone-50/60 md:overflow-y-auto overflow-x-auto">
+            <div className="hidden md:block px-4 py-3 border-b border-stone-200 sticky top-0 bg-stone-50/95 backdrop-blur-sm z-10">
+              <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest">
+                Pages ({pages.length})
+              </p>
+            </div>
+
+            {pages.length === 0 ? (
+              <div className="p-4 text-center text-xs text-stone-400">
+                No pages available
+              </div>
+            ) : (
+              <ul className="flex md:block md:p-2 md:space-y-1 gap-1 p-2">
+                {pages.map((p) => {
+                  const isActive = currentPage?.name === p.name;
+                  return (
+                    <li key={p.name} className="flex-shrink-0 md:flex-shrink">
+                      <button
+                        onClick={() => {
+                          log("Page select clicked:", p.name);
+                          if (!isActive) onPageSelect?.(p);
+                        }}
+                        className={`text-left px-3 py-2.5 rounded-lg transition-colors flex items-start gap-2.5 whitespace-nowrap md:whitespace-normal md:w-full ${
+                          isActive
+                            ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300"
+                            : "text-stone-700 hover:bg-stone-100"
+                        }`}
+                      >
+                        <FileText
+                          size={14}
+                          className={`mt-0.5 flex-shrink-0 ${
+                            isActive ? "text-amber-700" : "text-stone-400"
+                          }`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold truncate">
+                            {getDisplayName ? getDisplayName(p.name) : p.name}
+                          </p>
+                          <p className="hidden md:block text-[10px] text-stone-400 truncate font-mono">
+                            {p.name}
+                          </p>
+                        </div>
+                        {isActive && (
+                          <span className="hidden md:block w-1.5 h-1.5 rounded-full bg-amber-600 mt-1.5 flex-shrink-0" />
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </aside>
+
+          {/* RIGHT: toolbar + editor */}
+          <section className="flex-1 min-w-0 flex flex-col min-h-0">
+            {!currentPage ? (
+              <div className="flex-1 flex items-center justify-center text-stone-400 p-6">
+                <div className="text-center">
+                  <FileCode size={42} className="mx-auto mb-3 opacity-40" />
+                  <p className="text-sm font-medium">Select a page to start editing</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Toolbar */}
+                <div className="flex flex-wrap items-center gap-1 px-3 sm:px-4 py-2 border-b border-stone-200 bg-white flex-shrink-0">
+                  <ToolbarBtn
+                    active={activeFormats.bold}
+                    onClick={() => exec("bold")}
+                    title="Bold"
+                  >
+                    <Bold size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    active={activeFormats.italic}
+                    onClick={() => exec("italic")}
+                    title="Italic"
+                  >
+                    <Italic size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    active={activeFormats.underline}
+                    onClick={() => exec("underline")}
+                    title="Underline"
+                  >
+                    <Underline size={14} />
+                  </ToolbarBtn>
+
+                  <div className="w-px h-5 bg-stone-200 mx-1" />
+
+                  <ToolbarBtn
+                    active={activeFormats.justifyLeft}
+                    onClick={() => exec("justifyLeft")}
+                    title="Align left"
+                  >
+                    <AlignLeft size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    active={activeFormats.justifyCenter}
+                    onClick={() => exec("justifyCenter")}
+                    title="Align center"
+                  >
+                    <AlignCenter size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    active={activeFormats.justifyRight}
+                    onClick={() => exec("justifyRight")}
+                    title="Align right"
+                  >
+                    <AlignRight size={14} />
+                  </ToolbarBtn>
+
+                  <div className="w-px h-5 bg-stone-200 mx-1" />
+
+                  <div className="relative">
+                    <ToolbarBtn
+                      active={colorOpen}
+                      onClick={() => {
+                        log("Toggling color picker:", !colorOpen);
+                        setColorOpen((v) => !v);
+                      }}
+                      title="Text color"
+                    >
+                      <Palette size={14} />
+                    </ToolbarBtn>
+                    {colorOpen && (
+                      <div className="absolute z-30 mt-2 left-0 bg-white border border-stone-200 rounded-lg shadow-lg p-2 grid grid-cols-5 gap-1">
+                        {[
+                          "#000000", "#1f2937", "#7f1d1d", "#b45309",
+                          "#047857", "#1d4ed8", "#6d28d9", "#be185d",
+                          "#ffffff", "#f3f4f6",
+                        ].map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => {
+                              log("Applying color:", c);
+                              exec("foreColor", c);
+                              setColorOpen(false);
+                            }}
+                            className="w-5 h-5 rounded border border-stone-200"
+                            style={{ background: c }}
+                            title={c}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <ToolbarBtn
+                    onClick={openInsertImagePicker}
+                    title="Insert image"
+                    active={uploading}
+                  >
+                    {uploading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <ImagePlus size={14} />
+                    )}
+                  </ToolbarBtn>
+
+                  <ToolbarBtn
+                    onClick={() => exec("removeFormat")}
+                    title="Clear formatting"
+                  >
+                    <Eraser size={14} />
+                  </ToolbarBtn>
+
+                  <span className="ml-auto hidden sm:inline text-[10px] font-bold text-stone-400 uppercase tracking-widest truncate max-w-[160px]">
+                    {currentPage.name}
+                  </span>
+                </div>
+
+                {/* Editable area */}
+                <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-stone-100 relative">
+                  <div className="relative mx-auto w-full max-w-[794px]">
+                    <div
+                      ref={editorRef}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onClick={handleEditorClick}
+                      onInput={() => {
+                        refreshFormats();
+                        computeImageBoxes();
+                      }}
+                      onKeyUp={refreshFormats}
+                      onMouseUp={refreshFormats}
+                      className="bg-white w-full min-h-[600px] sm:min-h-[900px] p-5 sm:p-10 shadow-sm border border-stone-200 outline-none prose prose-sm max-w-none focus:ring-2 focus:ring-amber-300 [&_img]:cursor-pointer [&_img]:max-w-full [&_img]:h-auto"
+                    />
+
+                    {/* Overlay: "Replace" button over each image */}
+                    {!uploading &&
+                      imageBoxes.map((box) => (
+                        <button
+                          key={box.id}
+                          type="button"
+                          onClick={(e) => {
+                            log("Replace overlay clicked for box", box.id, box.src);
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (box.el) openReplaceImagePicker(box.el);
+                          }}
+                          style={{
+                            position: "absolute",
+                            top: box.top + 6,
+                            left: box.left + 6,
+                            zIndex: 5,
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 bg-stone-900/85 hover:bg-stone-900 text-white text-[10px] font-bold rounded shadow-lg"
+                          title="Replace image"
+                        >
+                          <ImagePlus size={11} />
+                          Replace
+                        </button>
+                      ))}
+
+                    {/* Upload overlay */}
+                    {uploading && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-20 rounded">
+                        <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-xl shadow-lg border border-stone-200">
+                          <Loader2 size={16} className="animate-spin text-amber-600" />
+                          <span className="text-xs font-bold text-stone-700">
+                            Uploading image…
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-stone-400 text-center mt-3 px-2">
+                    Tip: click the <strong>Replace</strong> button on any image to swap it ·
+                    Use the
+                    <ImagePlus size={11} className="inline mx-1" />
+                    button in the toolbar to insert a new one.
+                  </p>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+
+        {/* Footer */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-t border-stone-200 bg-stone-50 flex-shrink-0">
+          <p className="text-[11px] text-stone-400 truncate">
+            {currentPage
+              ? `Editing: ${getDisplayName ? getDisplayName(currentPage.name) : currentPage.name}`
+              : "No page selected"}
+          </p>
+          <div className="flex items-center gap-2 sm:gap-3 justify-end">
+            <button
+              onClick={() => {
+                log("Footer cancel clicked");
+                onClose();
+              }}
+              disabled={isSaving || uploading}
+              className="px-4 py-2 text-sm font-bold rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving || uploading || !currentPage}
+              className="flex items-center gap-2 px-4 sm:px-5 py-2 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-all shadow-md shadow-amber-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> Saving…
+                </>
+              ) : (
+                <>Save Page</>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileChosen}
+        />
+      </div>
+    </div>
+  );
 };
 
 /* ============================================================
@@ -107,7 +764,10 @@ const fmDisplaySrc = (src) => {
 ============================================================ */
 
 const CurriculumCompiler = () => {
+  log("CurriculumCompiler render");
   const { axios, adminToken } = useAppContext();
+
+  log("Context ready:", { hasAxios: !!axios, hasToken: !!adminToken });
 
   /* ---------------- Program state ---------------- */
   const [programs, setPrograms] = useState([]);
@@ -135,20 +795,13 @@ const CurriculumCompiler = () => {
     sortBy: "semester-asc",
   }));
 
-  /* ---------------- Front matter (list) ---------------- */
+  /* ---------------- Front matter ---------------- */
   const [frontMatterPages, setFrontMatterPages] = useState([]);
   const [loadingPages, setLoadingPages] = useState(false);
-
-  /* ---------------- Front matter editor state ---------------- */
   const [pageEditorOpen, setPageEditorOpen] = useState(false);
   const [selectedPage, setSelectedPage] = useState(null);
-  const [editorDraft, setEditorDraft] = useState("");
-  const [editorOriginal, setEditorOriginal] = useState("");
-  const [editorTab, setEditorTab] = useState("visual"); // "visual" | "html"
-  const [editorSaving, setEditorSaving] = useState(false);
-  const [editorResetting, setEditorResetting] = useState(false);
-  const [editorUploadingImage, setEditorUploadingImage] = useState(null);
-  const editorRef = useRef(null);
+  const [pageContent, setPageContent] = useState("");
+  const [isSavingPage, setIsSavingPage] = useState(false);
 
   /* ---------------- Preview ---------------- */
   const [singlePreviewCD, setSinglePreviewCD] = useState(null);
@@ -165,13 +818,16 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const fetchApprovedPrograms = async () => {
+    log("fetchApprovedPrograms — start");
     setLoadingList(true);
     try {
       const { data } = await axios.get("/api/admin/approved/pds", {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
+      log("fetchApprovedPrograms — response:", data);
       if (data.success) setPrograms(data.pds);
     } catch (err) {
+      logErr("fetchApprovedPrograms failed:", err);
       toast.error("Failed to load approved programs");
     } finally {
       setLoadingList(false);
@@ -179,6 +835,7 @@ const CurriculumCompiler = () => {
   };
 
   useEffect(() => {
+    log("useEffect [adminToken] — fetching programs");
     if (adminToken) fetchApprovedPrograms();
     // eslint-disable-next-line
   }, [adminToken]);
@@ -188,16 +845,19 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const fetchAvailableCDs = async (programId) => {
+    log("fetchAvailableCDs — programId:", programId);
     setLoadingCDs(true);
     try {
       const { data } = await axios.get(`/api/admin/compiler/program/${programId}/cds`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
+      log("fetchAvailableCDs — response:", data);
       if (data.success) {
         setAvailableCDs(data.availableCDs);
         const availableCodes = data.availableCDs
           .filter((c) => c.available)
           .map((c) => c.courseCode);
+        log("Available codes:", availableCodes.length, availableCodes);
         setSelectedCourseCodes(availableCodes);
         setCdOrder(availableCodes);
         if (data.programInfo) {
@@ -211,7 +871,7 @@ const CurriculumCompiler = () => {
         }
       }
     } catch (err) {
-      console.error("Failed to fetch CDs:", err);
+      logErr("fetchAvailableCDs failed:", err);
       toast.error("Failed to load course documents");
     } finally {
       setLoadingCDs(false);
@@ -223,14 +883,22 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const fetchFrontMatterPages = async () => {
+    log("fetchFrontMatterPages — start");
     setLoadingPages(true);
     try {
       const { data } = await axios.get("/api/admin/compiler/frontmatter/pages", {
         headers: { Authorization: `Bearer ${adminToken}` },
+        params: { _t: Date.now() }, // prevent any intermediate caching
+      });
+      log("fetchFrontMatterPages — response:", {
+        success: data?.success,
+        count: data?.pages?.length,
+        names: data?.pages?.map((p) => p.name),
       });
       if (data.success) setFrontMatterPages(data.pages);
     } catch (err) {
-      console.error("Failed to fetch front matter pages:", err);
+      logErr("fetchFrontMatterPages failed:", err);
+      logErr("Status:", err?.response?.status, "data:", err?.response?.data);
     } finally {
       setLoadingPages(false);
     }
@@ -241,6 +909,7 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const checkReadiness = async (pd) => {
+    log("checkReadiness — pd:", pd._id, pd.program_name);
     setSelectedPd(pd);
     setReadiness(null);
     setChecking(true);
@@ -260,6 +929,7 @@ const CurriculumCompiler = () => {
       const { data } = await axios.get(`/api/admin/compiler/readiness/${pd._id}`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
+      log("checkReadiness — response:", data);
       if (data.success) {
         setReadiness(data.analysis);
         setCurriculumConfig((prev) => ({
@@ -269,6 +939,7 @@ const CurriculumCompiler = () => {
         }));
       }
     } catch (err) {
+      logErr("checkReadiness failed:", err);
       toast.error("Error analyzing curriculum");
     } finally {
       setChecking(false);
@@ -300,299 +971,80 @@ const CurriculumCompiler = () => {
   }, []);
 
   /* ============================================================
-     FRONT MATTER EDITOR HANDLERS
+     FRONT MATTER HANDLERS
   ============================================================ */
 
-  const editorDirty = editorDraft !== editorOriginal;
-
-  const openEditor = () => {
-    if (frontMatterPages.length === 0) {
-      toast.error("No front matter pages available");
-      return;
-    }
-    const coverPage =
-      frontMatterPages.find((p) => p.name === "cover") || frontMatterPages[0];
-    setSelectedPage(coverPage);
-    setEditorDraft(coverPage.content || "");
-    setEditorOriginal(coverPage.content || "");
-    setEditorTab("visual");
+  const handleEditPage = (page) => {
+    log("handleEditPage:", page.name, "content length:", page.content?.length);
+    setSelectedPage(page);
+    setPageContent(page.content || "");
     setPageEditorOpen(true);
   };
+  const handlePageSelect = (page) => {
+    log("handlePageSelect:", page.name);
+    setSelectedPage(page);
+    setPageContent(page.content || "");
+  };
 
-  // Prepare HTML for the visual editor.
-  // The saved HTML keeps the original image source, while the visual editor
-  // uses a browser-accessible URL for rendering.
-  const prepareVisualHtml = useCallback((html) => {
-    if (!html || typeof document === "undefined") return html || "";
-
-    const container = document.createElement("div");
-    container.innerHTML = html;
-
-    container.querySelectorAll("img").forEach((img) => {
-      const originalSrc =
-        img.getAttribute("data-original-src") || img.getAttribute("src") || "";
-
-      img.setAttribute("data-original-src", originalSrc);
-      img.setAttribute("data-editor-image", "true");
-      img.setAttribute("src", fmDisplaySrc(originalSrc));
-      img.setAttribute("title", "Click to replace this image");
-      img.style.cursor = "pointer";
-      img.style.maxWidth = "100%";
-      img.style.height = "auto";
-    });
-
-    return container.innerHTML;
-  }, []);
-
-  // Convert the visual editor HTML back to the original HTML before saving.
-  const serializeVisualHtml = useCallback(() => {
-    if (!editorRef.current) return editorDraft;
-
-    const container = editorRef.current.cloneNode(true);
-
-    container.querySelectorAll("img").forEach((img) => {
-      const originalSrc = img.getAttribute("data-original-src");
-      if (originalSrc) img.setAttribute("src", originalSrc);
-
-      img.removeAttribute("data-original-src");
-      img.removeAttribute("data-editor-image");
-      img.removeAttribute("title");
-      img.style.cursor = "";
-      img.style.maxWidth = "";
-      img.style.height = "";
-    });
-
-    return container.innerHTML;
-  }, [editorDraft]);
-
-  // Sync the contentEditable DOM whenever the selected page, editor tab,
-  // or modal visibility changes.
-  useEffect(() => {
-    if (!pageEditorOpen || editorTab !== "visual" || !editorRef.current) return;
-    editorRef.current.innerHTML = prepareVisualHtml(editorDraft);
-  }, [selectedPage, editorTab, pageEditorOpen, prepareVisualHtml]);
-
-  const handleSelectEditorPage = (page) => {
-    if (page.name === selectedPage?.name) return;
-
-    if (editorDirty && !confirm("You have unsaved changes. Discard them?")) {
+  // Save -> then refetch the saved page so the editor auto-refreshes
+  const handleSavePage = async ({ name, content }) => {
+    log("handleSavePage — name:", name, "content length:", content?.length);
+    if (!name) {
+      logWarn("No name provided");
+      toast.error("No page selected");
       return;
     }
-
-    setSelectedPage(page);
-    setEditorDraft(page.content || "");
-    setEditorOriginal(page.content || "");
-  };
-
-  const handleEditorInput = () => {
-    if (!editorRef.current) return;
-
-    // Keep the browser/display URL out of the saved HTML.
-    const content = serializeVisualHtml();
-    setEditorDraft(content);
-  };
-
-  const handleEditorImageClick = (event) => {
-    const image = event.target.closest("img[data-editor-image='true']");
-    if (!image) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const originalSrc =
-      image.getAttribute("data-original-src") || image.getAttribute("src") || "";
-
-    handleEditorReplaceImage({
-      src: originalSrc,
-      filename: fmBasename(originalSrc),
-      alt: image.getAttribute("alt") || "",
-      element: image,
-    });
-  };
-
-  const handleEditorSave = async () => {
-    if (!selectedPage) return;
-
-    setEditorSaving(true);
-
+    setIsSavingPage(true);
     try {
-      const contentToSave =
-        editorTab === "visual" && editorRef.current
-          ? serializeVisualHtml()
-          : editorDraft;
-
-      await axios.post(
-        "/api/admin/compiler/frontmatter/save",
-        { pageName: selectedPage.name, content: contentToSave },
+      // 1) Save
+      const saveUrl = "/api/admin/compiler/frontmatter/save";
+      log("POST", saveUrl, { pageName: name });
+      const saveRes = await axios.post(
+        saveUrl,
+        { pageName: name, content },
         { headers: { Authorization: `Bearer ${adminToken}` } }
       );
+      log("handleSavePage — save response:", saveRes.data);
 
-      setEditorDraft(contentToSave);
-      setEditorOriginal(contentToSave);
-      toast.success("Changes saved successfully");
+      if (saveRes.data?.success === false) {
+        throw new Error(saveRes.data?.message || "Save failed");
+      }
+
+      toast.success("Page saved");
+
+      // 2) Re-fetch the page from the backend so we render exactly what's on disk
+      const fetchUrl = `/api/admin/compiler/frontmatter/page/${encodeURIComponent(name)}`;
+      log("GET", fetchUrl);
+      const fresh = await axios.get(fetchUrl, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        params: { _t: Date.now() },
+      });
+      log("handleSavePage — fresh page response:", {
+        success: fresh.data?.success,
+        length: fresh.data?.page?.content?.length,
+      });
+
+      let freshContent = content;
+      if (fresh.data?.success && fresh.data?.page?.content) {
+        freshContent = fresh.data.page.content;
+      }
+
+      // 3) Update local state so the editor re-renders with fresh cache-busted URLs
+      setFrontMatterPages((prev) =>
+        prev.map((p) => (p.name === name ? { ...p, content: freshContent } : p))
+      );
+      setSelectedPage((prev) => (prev ? { ...prev, content: freshContent } : prev));
+      setPageContent(freshContent);
+
+      // 4) Background refresh of the whole list
       fetchFrontMatterPages();
     } catch (err) {
-      console.error("Save error:", err);
-      toast.error(err.response?.data?.message || "Save failed");
+      logErr("Save page failed:", err);
+      logErr("Status:", err?.response?.status, "data:", err?.response?.data);
+      toast.error(err?.response?.data?.message || "Failed to save page");
     } finally {
-      setEditorSaving(false);
+      setIsSavingPage(false);
     }
-  };
-
-  const handleEditorReset = async () => {
-    if (!selectedPage) return;
-
-    const confirmed = confirm(
-      `Reset "${getDisplayName(selectedPage.name)}" to default?\n\nAll unsaved changes on this page will be lost.`
-    );
-
-    if (!confirmed) return;
-
-    setEditorResetting(true);
-
-    try {
-      const resetResponse = await axios.post(
-        `/api/admin/compiler/frontmatter/reset/${selectedPage.name}`,
-        {},
-        { headers: { Authorization: `Bearer ${adminToken}` } }
-      );
-
-      if (resetResponse.data?.success === false) {
-        throw new Error(resetResponse.data?.message || "Reset failed");
-      }
-
-      const { data } = await axios.get(
-        `/api/admin/compiler/frontmatter/page/${selectedPage.name}`,
-        { headers: { Authorization: `Bearer ${adminToken}` } }
-      );
-
-      if (!data.success || !data.page) {
-        throw new Error(data.message || "Failed to load the reset page");
-      }
-
-      const resetContent = data.page.content || "";
-
-      setSelectedPage(data.page);
-      setEditorDraft(resetContent);
-      setEditorOriginal(resetContent);
-      setEditorTab("visual");
-
-      if (editorRef.current) {
-        editorRef.current.innerHTML = prepareVisualHtml(resetContent);
-      }
-
-      await fetchFrontMatterPages();
-      toast.success("Page restored to default");
-    } catch (err) {
-      console.error("Reset error:", err);
-      toast.error(
-        err.response?.data?.message || err.message || "Reset failed"
-      );
-    } finally {
-      setEditorResetting(false);
-    }
-  };
-
-  const handleEditorReplaceImage = (imageMeta) => {
-    if (!selectedPage || !imageMeta?.filename) {
-      toast.error("Unable to identify the selected image");
-      return;
-    }
-
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-
-    input.onchange = async (event) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-
-      setEditorUploadingImage(imageMeta.filename);
-
-      try {
-        const formData = new FormData();
-        formData.append("pageName", selectedPage.name);
-        formData.append("filename", file.name);
-        formData.append("oldFilename", imageMeta.filename);
-        formData.append("image", file);
-
-        const { data } = await axios.post(
-          "/api/admin/compiler/frontmatter/image",
-          formData,
-          {
-            headers: {
-              Authorization: `Bearer ${adminToken}`,
-              "Content-Type": "multipart/form-data",
-            },
-          }
-        );
-
-        if (!data.success) {
-          toast.error(data.message || "Upload failed");
-          return;
-        }
-
-        const oldFilename = imageMeta.filename;
-        const newFilename = data.filename || file.name;
-
-        // Update the saved HTML source.
-        const re = new RegExp(
-          `(src\\s*=\\s*["'])([^"']*?${fmEscapeRe(oldFilename)})(["'])`,
-          "gi"
-        );
-
-        const updatedDraft = editorDraft.replace(
-          re,
-          (_match, quoteStart, src, quoteEnd) =>
-            `${quoteStart}${src.replace(oldFilename, newFilename)}${quoteEnd}`
-        );
-
-        setEditorDraft(updatedDraft);
-
-        // Update the image currently visible in the editor immediately.
-        if (editorRef.current) {
-          editorRef.current.querySelectorAll("img[data-editor-image='true']").forEach((img) => {
-            const currentOriginal =
-              img.getAttribute("data-original-src") || img.getAttribute("src") || "";
-
-            if (currentOriginal.includes(oldFilename)) {
-              const newOriginal = currentOriginal.replace(
-                oldFilename,
-                newFilename
-              );
-
-              img.setAttribute("data-original-src", newOriginal);
-              img.setAttribute("src", fmDisplaySrc(newOriginal));
-              img.setAttribute("title", "Click to replace this image");
-            }
-          });
-        }
-
-        toast.success("Image replaced. Click Save Changes to save it.");
-      } catch (err) {
-        console.error("Image replacement error:", err);
-        toast.error(
-          err.response?.data?.message || "Image upload failed"
-        );
-      } finally {
-        setEditorUploadingImage(null);
-      }
-    };
-
-    input.click();
-  };
-
-  const handleEditorClose = () => {
-    if (editorDirty && !confirm("You have unsaved changes. Close anyway?")) {
-      return;
-    }
-
-    setPageEditorOpen(false);
-    setSelectedPage(null);
-    setEditorDraft("");
-    setEditorOriginal("");
-    setEditorTab("visual");
-    setEditorUploadingImage(null);
   };
 
   /* ============================================================
@@ -600,6 +1052,7 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const handleToggleCD = (courseCode) => {
+    log("handleToggleCD:", courseCode);
     setSelectedCourseCodes((prev) =>
       prev.includes(courseCode)
         ? prev.filter((c) => c !== courseCode)
@@ -608,6 +1061,7 @@ const CurriculumCompiler = () => {
   };
 
   const handleMoveUp = (courseCode) => {
+    log("handleMoveUp:", courseCode);
     const i = cdOrder.indexOf(courseCode);
     if (i > 0) {
       const next = [...cdOrder];
@@ -616,6 +1070,7 @@ const CurriculumCompiler = () => {
     }
   };
   const handleMoveDown = (courseCode) => {
+    log("handleMoveDown:", courseCode);
     const i = cdOrder.indexOf(courseCode);
     if (i < cdOrder.length - 1) {
       const next = [...cdOrder];
@@ -631,22 +1086,18 @@ const CurriculumCompiler = () => {
   const allSemesters = useMemo(() => {
     const set = new Set();
     availableCDs.forEach((cd) => set.add(cd.semester));
-    return Array.from(set).sort((a, b) => {
-      const na = typeof a === "number" ? a : 999;
-      const nb = typeof b === "number" ? b : 999;
-      return na - nb;
-    });
+    return Array.from(set).sort((a, b) => semOrder(a) - semOrder(b));
   }, [availableCDs]);
 
   const visibleCDs = useMemo(() => {
     let list = [...availableCDs];
 
     if (filters.search.trim()) {
-      const q = filters.search.toLowerCase();
+      const q = filters.search.trim().toLowerCase();
       list = list.filter(
         (cd) =>
-          (cd.courseCode || "").toLowerCase().includes(q) ||
-          (cd.courseTitle || "").toLowerCase().includes(q)
+          String(cd.courseCode || "").toLowerCase().includes(q) ||
+          String(cd.courseTitle || "").toLowerCase().includes(q)
       );
     }
     if (filters.semesters.size > 0) {
@@ -663,19 +1114,31 @@ const CurriculumCompiler = () => {
 
     const [key, dir] = filters.sortBy.split("-");
     const sign = dir === "desc" ? -1 : 1;
+    const byCode = (a, b) =>
+      String(a.courseCode || "").localeCompare(String(b.courseCode || ""));
+
     list.sort((a, b) => {
       if (key === "semester") {
-        const sa = typeof a.semester === "number" ? a.semester : 999;
-        const sb = typeof b.semester === "number" ? b.semester : 999;
-        if (sa !== sb) return sign * (sa - sb);
-        return (a.courseCode || "").localeCompare(b.courseCode || "");
+        const diff = semOrder(a.semester) - semOrder(b.semester);
+        if (diff !== 0) return sign * diff;
+        return byCode(a, b);
       }
-      if (key === "code")  return sign * (a.courseCode || "").localeCompare(b.courseCode || "");
-      if (key === "title") return sign * (a.courseTitle || "").localeCompare(b.courseTitle || "");
+      if (key === "code") {
+        return sign * byCode(a, b);
+      }
+      if (key === "title") {
+        const c = String(a.courseTitle || "").localeCompare(
+          String(b.courseTitle || "")
+        );
+        return c !== 0 ? sign * c : byCode(a, b);
+      }
       if (key === "status") {
+        // "asc" = Available first (A → M), "desc" = Missing first (M → A)
         const sa = a.available ? 1 : 0;
         const sb = b.available ? 1 : 0;
-        return sign * (sa - sb);
+        if (sa !== sb) return sign * (sb - sa);
+        const diff = semOrder(a.semester) - semOrder(b.semester);
+        return diff !== 0 ? diff : byCode(a, b);
       }
       return 0;
     });
@@ -683,8 +1146,10 @@ const CurriculumCompiler = () => {
     return list;
   }, [availableCDs, filters]);
 
+  // Only AVAILABLE visible courses can be bulk-selected
+  // (missing CDs have no data and must never be added to the book).
   const visibleCourseCodes = useMemo(
-    () => visibleCDs.map((cd) => cd.courseCode),
+    () => visibleCDs.filter((cd) => cd.available).map((cd) => cd.courseCode),
     [visibleCDs]
   );
 
@@ -702,6 +1167,11 @@ const CurriculumCompiler = () => {
     globalSelectedCount > 0 && globalSelectedCount < visibleCourseCodes.length;
 
   const handleToggleAllVisible = () => {
+    log("handleToggleAllVisible — allSelected:", globalAllSelected);
+    if (visibleCourseCodes.length === 0) {
+      toast.error("No available course documents in the current view");
+      return;
+    }
     if (globalAllSelected) {
       setSelectedCourseCodes((prev) =>
         prev.filter((c) => !visibleCourseCodes.includes(c))
@@ -715,26 +1185,29 @@ const CurriculumCompiler = () => {
     }
   };
 
-  const isSemesterFullySelected = (sem) => {
-    const codes = visibleCDs
-      .filter((cd) => cd.semester === sem)
+  const semesterAvailableCodes = (sem) =>
+    visibleCDs
+      .filter((cd) => cd.semester === sem && cd.available)
       .map((cd) => cd.courseCode);
+
+  const isSemesterFullySelected = (sem) => {
+    const codes = semesterAvailableCodes(sem);
     return codes.length > 0 && codes.every((c) => selectedCourseCodes.includes(c));
   };
 
   const isSemesterPartiallySelected = (sem) => {
-    const codes = visibleCDs
-      .filter((cd) => cd.semester === sem)
-      .map((cd) => cd.courseCode);
+    const codes = semesterAvailableCodes(sem);
     const on = codes.filter((c) => selectedCourseCodes.includes(c)).length;
     return on > 0 && on < codes.length;
   };
 
   const handleToggleSemester = (sem) => {
-    const codes = visibleCDs
-      .filter((cd) => cd.semester === sem)
-      .map((cd) => cd.courseCode);
-    if (codes.length === 0) return;
+    log("handleToggleSemester:", sem);
+    const codes = semesterAvailableCodes(sem);
+    if (codes.length === 0) {
+      toast.error("No available course documents in this semester");
+      return;
+    }
 
     const allOn = codes.every((c) => selectedCourseCodes.includes(c));
     setSelectedCourseCodes((prev) => {
@@ -745,6 +1218,8 @@ const CurriculumCompiler = () => {
     });
   };
 
+  // Groups follow the active sort: semester ↓ reverses the groups,
+  // every other sort keeps semesters ascending (items inside are sorted).
   const visibleGroupedBySemester = useMemo(() => {
     const map = new Map();
     visibleCDs.forEach((cd) => {
@@ -752,14 +1227,19 @@ const CurriculumCompiler = () => {
       if (!map.has(s)) map.set(s, []);
       map.get(s).push(cd);
     });
-    return map;
-  }, [visibleCDs]);
+    const desc = filters.sortBy === "semester-desc";
+    const entries = Array.from(map.entries()).sort(
+      (a, b) => (desc ? -1 : 1) * (semOrder(a[0]) - semOrder(b[0]))
+    );
+    return new Map(entries);
+  }, [visibleCDs, filters.sortBy]);
 
   /* ============================================================
      FILTER HANDLERS
   ============================================================ */
 
   const toggleFilterSemester = (sem) => {
+    log("toggleFilterSemester:", sem);
     setFilters((prev) => {
       const next = new Set(prev.semesters);
       if (next.has(sem)) next.delete(sem);
@@ -769,6 +1249,7 @@ const CurriculumCompiler = () => {
   };
 
   const toggleFilterStatus = (st) => {
+    log("toggleFilterStatus:", st);
     setFilters((prev) => {
       const next = new Set(prev.statuses);
       if (next.has(st)) next.delete(st);
@@ -777,10 +1258,14 @@ const CurriculumCompiler = () => {
     });
   };
 
-  const clearAllFilters = () =>
+  const clearAllFilters = () => {
+    log("clearAllFilters");
     setFilters({ ...DEFAULT_FILTERS, semesters: new Set(), statuses: new Set() });
-  const selectAllSemestersFilter = () =>
+  };
+  const selectAllSemestersFilter = () => {
+    log("selectAllSemestersFilter:", allSemesters);
     setFilters((p) => ({ ...p, semesters: new Set(allSemesters) }));
+  };
 
   /* ============================================================
      SORTED SELECTED CDS
@@ -806,6 +1291,7 @@ const CurriculumCompiler = () => {
   ============================================================ */
 
   const handlePreviewSingleCD = (cd) => {
+    log("handlePreviewSingleCD:", cd.courseCode, "available:", cd.available);
     if (!cd.available) {
       toast.error("This CD is not available");
       return;
@@ -814,6 +1300,7 @@ const CurriculumCompiler = () => {
   };
 
   const handlePreviewFullCurriculum = () => {
+    log("handlePreviewFullCurriculum — selected:", selectedCourseCodes.length);
     if (selectedCourseCodes.length === 0) {
       toast.error("Please select at least one course");
       return;
@@ -824,6 +1311,7 @@ const CurriculumCompiler = () => {
   const buildArgs = () => ({
     frontMatterPages: frontMatterPages.map((p) => ({
       ...p,
+      content: absolutizeImageUrls(p.content),
       displayName: getDisplayName(p.name),
     })),
     selectedCDs: getSelectedCDs,
@@ -836,6 +1324,7 @@ const CurriculumCompiler = () => {
   });
 
   const handleExportHTML = () => {
+    log("handleExportHTML");
     if (selectedCourseCodes.length === 0) {
       toast.error("Please select at least one course");
       return;
@@ -851,6 +1340,7 @@ const CurriculumCompiler = () => {
   };
 
   const handleExportPDF = () => {
+    log("handleExportPDF");
     if (selectedCourseCodes.length === 0) {
       toast.error("Please select at least one course");
       return;
@@ -875,26 +1365,38 @@ const CurriculumCompiler = () => {
      RENDER
   ============================================================ */
 
+  log("CurriculumCompiler render — state summary:", {
+    programs: programs.length,
+    selectedPd: selectedPd?._id,
+    readiness: !!readiness,
+    availableCDs: availableCDs.length,
+    selectedCourseCodes: selectedCourseCodes.length,
+    frontMatterPages: frontMatterPages.length,
+    pageEditorOpen,
+    selectedPage: selectedPage?.name,
+  });
+
   return (
     <AdminLayout>
       <style>{CD_PREVIEW_STYLES}</style>
-      <div className="space-y-8 max-w-7xl pb-10">
+      <div className="space-y-6 sm:space-y-8 max-w-7xl pb-10 px-3 sm:px-4 lg:px-0">
         {/* Header */}
-        <div className="flex items-start gap-4">
-          <div className="p-3 bg-amber-100 text-amber-800 rounded-2xl">
-            <Layers size={26} />
+        <div className="flex items-start gap-3 sm:gap-4">
+          <div className="p-2.5 sm:p-3 bg-amber-100 text-amber-800 rounded-2xl flex-shrink-0">
+            <Layers size={22} className="sm:hidden" />
+            <Layers size={26} className="hidden sm:block" />
           </div>
-          <div>
-            <h1 className="text-3xl font-black text-stone-900">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-black text-stone-900 leading-tight">
               Curriculum Compiler
             </h1>
-            <p className="text-stone-500 text-sm mt-1">
+            <p className="text-stone-500 text-xs sm:text-sm mt-1">
               Assemble approved course documents into a publication-ready PDF.
             </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 lg:gap-8">
           {/* Program List */}
           <div className="space-y-3">
             <div className="relative">
@@ -918,7 +1420,7 @@ const CurriculumCompiler = () => {
                 <p className="text-sm font-medium">No approved programs found</p>
               </div>
             ) : (
-              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[40vh] lg:max-h-[60vh] overflow-y-auto pr-1">
                 {filtered.map((pd) => {
                   const isSelected = selectedPd?._id === pd._id;
                   return (
@@ -931,18 +1433,18 @@ const CurriculumCompiler = () => {
                           : "border-stone-200 hover:border-amber-300 hover:bg-stone-50"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-stone-800 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-bold text-stone-800 text-sm truncate">
                             {pd.program_name}
                           </p>
-                          <p className="text-xs text-stone-400 font-mono">
+                          <p className="text-xs text-stone-400 font-mono truncate">
                             {pd.program_id}
                           </p>
                         </div>
                         <ChevronRight
                           size={16}
-                          className={`text-stone-400 transition ${
+                          className={`text-stone-400 transition flex-shrink-0 ${
                             isSelected ? "rotate-90 text-amber-600" : ""
                           }`}
                         />
@@ -955,9 +1457,9 @@ const CurriculumCompiler = () => {
           </div>
 
           {/* Right Side */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-5 sm:space-y-6">
             {selectedPd && checking && (
-              <div className="bg-white rounded-2xl border border-stone-200 shadow-sm min-h-[500px] flex items-center justify-center">
+              <div className="bg-white rounded-2xl border border-stone-200 shadow-sm min-h-[400px] sm:min-h-[500px] flex items-center justify-center">
                 <div className="flex flex-col items-center justify-center gap-4">
                   <Loader2 size={42} className="animate-spin text-amber-600" />
                   <div className="text-center">
@@ -972,12 +1474,12 @@ const CurriculumCompiler = () => {
 
             {/* Document Configuration */}
             {selectedPd && readiness && !checking && (
-              <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+              <div className="bg-white rounded-2xl border border-stone-200 p-4 sm:p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4">
                   <Settings size={18} className="text-stone-400" />
                   <h3 className="font-bold text-stone-700">Document Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <label className="block text-xs font-bold text-stone-500 mb-1">
                       Degree Title
@@ -1021,18 +1523,22 @@ const CurriculumCompiler = () => {
               </div>
             )}
 
-            {/* Front Matter Editor card */}
+            {/* Front Matter Editor */}
             {selectedPd && readiness && !checking && (
-              <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
-                <div className="flex items-center justify-between">
+              <div className="bg-white rounded-2xl border border-stone-200 p-4 sm:p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <FileCode size={18} className="text-stone-400" />
                     <h3 className="font-bold text-stone-700">Front Matter Pages</h3>
                   </div>
                   <button
-                    onClick={openEditor}
+                    onClick={() => {
+                      log("Edit Cover Pages clicked — frontMatterPages:", frontMatterPages.length);
+                      if (frontMatterPages.length > 0) handleEditPage(frontMatterPages[0]);
+                      else toast.error("No front matter pages available");
+                    }}
                     disabled={frontMatterPages.length === 0 || loadingPages}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-all shadow-md shadow-amber-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-all shadow-md shadow-amber-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Edit size={16} /> Edit Cover Pages
                   </button>
@@ -1060,7 +1566,7 @@ const CurriculumCompiler = () => {
 
             {/* UNIVERSAL SECTION SELECTOR */}
             {selectedPd && !checking && readiness && (
-              <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+              <div className="bg-white rounded-2xl border border-stone-200 p-4 sm:p-6 shadow-sm">
                 <UniversalSectionSelector value={globalSections} onChange={setGlobalSections} />
                 <p className="text-[11px] text-stone-400 mt-3">
                   These section toggles apply uniformly to every selected course
@@ -1072,13 +1578,12 @@ const CurriculumCompiler = () => {
             {/* FILTER / SELECTION PANEL */}
             {selectedPd && !checking && readiness && (
               <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-                {/* Header */}
-                <div className="p-5 border-b border-stone-200 bg-stone-50/50 flex items-center justify-between">
+                <div className="p-4 sm:p-5 border-b border-stone-200 bg-stone-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <BookOpen size={18} className="text-stone-400" />
                     <h3 className="font-bold text-stone-700">Select Course Documents</h3>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-full">
                       {selectedCourseCodes.length} / {availableCDs.length} selected
                     </span>
@@ -1088,8 +1593,7 @@ const CurriculumCompiler = () => {
                   </div>
                 </div>
 
-                {/* Filter panel */}
-                <div className="p-5 border-b border-stone-200 bg-stone-50/30 space-y-4">
+                <div className="p-4 sm:p-5 border-b border-stone-200 bg-stone-50/30 space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div className="relative md:col-span-2">
                       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
@@ -1105,7 +1609,7 @@ const CurriculumCompiler = () => {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <SortAsc size={14} className="text-stone-400" />
+                      <SortAsc size={14} className="text-stone-400 flex-shrink-0" />
                       <select
                         value={filters.sortBy}
                         onChange={(e) =>
@@ -1150,8 +1654,7 @@ const CurriculumCompiler = () => {
                     </button>
                     {allSemesters.map((sem) => {
                       const active = filters.semesters.has(sem);
-                      const label =
-                        typeof sem === "number" ? `Sem ${sem}` : String(sem);
+                      const label = isNumericSem(sem) ? `Sem ${sem}` : String(sem);
                       return (
                         <button
                           key={String(sem)}
@@ -1168,7 +1671,7 @@ const CurriculumCompiler = () => {
                     })}
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider mr-1">
                       Status:
                     </span>
@@ -1193,7 +1696,7 @@ const CurriculumCompiler = () => {
                       Missing
                     </button>
 
-                    <label className="ml-auto flex items-center gap-1.5 text-[11px] text-stone-600 font-medium cursor-pointer">
+                    <label className="sm:ml-auto flex items-center gap-1.5 text-[11px] text-stone-600 font-medium cursor-pointer">
                       <input
                         type="checkbox"
                         checked={filters.onlyAvailable}
@@ -1206,7 +1709,7 @@ const CurriculumCompiler = () => {
                     </label>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-stone-200">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-2 border-t border-stone-200">
                     <label className="flex items-center gap-2 cursor-pointer select-none">
                       <input
                         type="checkbox"
@@ -1227,14 +1730,13 @@ const CurriculumCompiler = () => {
                     >
                       Deselect All
                     </button>
-                    <span className="text-[11px] text-stone-400 ml-auto">
+                    <span className="text-[11px] text-stone-400 sm:ml-auto">
                       {visibleCDs.length} shown · {availableCDs.length} total
                     </span>
                   </div>
                 </div>
 
-                {/* CD list */}
-                <div className="p-4 max-h-[500px] overflow-y-auto">
+                <div className="p-3 sm:p-4 max-h-[60vh] sm:max-h-[500px] overflow-y-auto">
                   {loadingCDs ? (
                     <div className="flex justify-center py-8">
                       <Loader2 size={24} className="animate-spin text-amber-600" />
@@ -1261,8 +1763,9 @@ const CurriculumCompiler = () => {
                     <div className="space-y-5">
                       {Array.from(visibleGroupedBySemester.entries()).map(
                         ([sem, list]) => {
-                          const semLabel =
-                            typeof sem === "number" ? `Semester ${sem}` : String(sem);
+                          const semLabel = isNumericSem(sem)
+                            ? `Semester ${sem}`
+                            : String(sem);
                           const fullySelected = isSemesterFullySelected(sem);
                           const partiallySelected = isSemesterPartiallySelected(sem);
                           const semSelectedCount = list.filter((cd) =>
@@ -1271,8 +1774,8 @@ const CurriculumCompiler = () => {
 
                           return (
                             <div key={String(sem)}>
-                              <div className="flex items-center justify-between mb-2 pb-1 border-b border-stone-200">
-                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <div className="flex items-center justify-between mb-2 pb-1 border-b border-stone-200 gap-2">
+                                <label className="flex items-center gap-2 cursor-pointer select-none min-w-0">
                                   <input
                                     type="checkbox"
                                     checked={fullySelected}
@@ -1280,13 +1783,13 @@ const CurriculumCompiler = () => {
                                       if (el) el.indeterminate = partiallySelected;
                                     }}
                                     onChange={() => handleToggleSemester(sem)}
-                                    className="w-4 h-4 accent-amber-600"
+                                    className="w-4 h-4 accent-amber-600 flex-shrink-0"
                                   />
-                                  <span className="text-xs font-bold text-stone-700 uppercase tracking-wide">
+                                  <span className="text-xs font-bold text-stone-700 uppercase tracking-wide truncate">
                                     {semLabel}
                                   </span>
                                 </label>
-                                <span className="text-[10px] font-bold text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full">
+                                <span className="text-[10px] font-bold text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full flex-shrink-0">
                                   {semSelectedCount} / {list.length}
                                 </span>
                               </div>
@@ -1321,15 +1824,14 @@ const CurriculumCompiler = () => {
                   )}
                 </div>
 
-                {/* Preview bar */}
                 {selectedCourseCodes.length > 0 && (
-                  <div className="p-4 border-t border-stone-200 bg-stone-50/50 flex items-center justify-between">
+                  <div className="p-3 sm:p-4 border-t border-stone-200 bg-stone-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="text-xs text-stone-500">
                       {selectedCourseCodes.length} courses selected · Ready for preview
                     </div>
                     <button
                       onClick={handlePreviewFullCurriculum}
-                      className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-all shadow-md shadow-amber-600/20"
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-all shadow-md shadow-amber-600/20"
                     >
                       <Eye size={16} />
                       Preview Full Curriculum
@@ -1341,21 +1843,21 @@ const CurriculumCompiler = () => {
 
             {/* Export Section */}
             {selectedPd && !checking && readiness && selectedCourseCodes.length > 0 && (
-              <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+              <div className="bg-white rounded-2xl border border-stone-200 p-4 sm:p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4">
                   <Download size={18} className="text-stone-400" />
                   <h3 className="font-bold text-stone-700">Export Options</h3>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <button
                     onClick={handleExportHTML}
-                    className="flex items-center gap-2 px-5 py-3 bg-stone-800 text-white text-sm font-bold rounded-lg hover:bg-stone-900 transition-all"
+                    className="flex items-center justify-center gap-2 px-5 py-3 bg-stone-800 text-white text-sm font-bold rounded-lg hover:bg-stone-900 transition-all"
                   >
                     <Globe size={16} /> Download HTML
                   </button>
                   <button
                     onClick={handleExportPDF}
-                    className="flex items-center gap-2 px-5 py-3 bg-blue-600 text-white font-bold text-sm rounded-lg hover:bg-blue-700 transition-all"
+                    className="flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 text-white font-bold text-sm rounded-lg hover:bg-blue-700 transition-all"
                   >
                     <FileDown size={16} /> Download PDF
                   </button>
@@ -1369,26 +1871,26 @@ const CurriculumCompiler = () => {
 
             {/* Readiness Report */}
             {selectedPd && !checking && readiness && (
-              <div className="bg-white rounded-[2.5rem] border border-stone-200 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-140px)] min-h-[600px]">
-                <div className="p-7 border-b border-stone-100 bg-stone-50/50 flex-shrink-0">
-                  <div className="flex justify-between items-start">
-                    <div>
+              <div className="bg-white rounded-2xl sm:rounded-[2.5rem] border border-stone-200 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-140px)] min-h-[500px] sm:min-h-[600px]">
+                <div className="p-4 sm:p-7 border-b border-stone-100 bg-stone-50/50 flex-shrink-0">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <BarChart3 size={15} className="text-amber-700" />
                         <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">
                           Readiness Report
                         </span>
                       </div>
-                      <h3 className="text-xl font-black text-stone-900">
+                      <h3 className="text-lg sm:text-xl font-black text-stone-900 truncate">
                         {readiness.programName || readiness.programCode}
                       </h3>
-                      <p className="text-stone-400 text-sm font-medium mt-0.5">
+                      <p className="text-stone-400 text-sm font-medium mt-0.5 truncate">
                         {readiness.programCode}
                       </p>
                     </div>
-                    <div className="text-right">
+                    <div className="sm:text-right flex-shrink-0">
                       <p
-                        className={`text-4xl font-black tabular-nums tracking-tighter ${
+                        className={`text-3xl sm:text-4xl font-black tabular-nums tracking-tighter ${
                           pct === 100
                             ? "text-green-600"
                             : pct >= 60
@@ -1409,12 +1911,12 @@ const CurriculumCompiler = () => {
                       <span className="text-green-600 font-bold">
                         {readiness.totalApproved} approved
                       </span>
-                      <span>{readiness.totalRequired} total courses required</span>
+                      <span>{readiness.totalRequired} total required</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="p-7 space-y-7 overflow-y-auto flex-1 bg-stone-50/30">
+                <div className="p-4 sm:p-7 space-y-5 sm:space-y-7 overflow-y-auto flex-1 bg-stone-50/30">
                   {readiness.semesters?.map((sem) => (
                     <div key={sem.number}>
                       <div className="flex items-center gap-3 mb-3">
@@ -1422,7 +1924,7 @@ const CurriculumCompiler = () => {
                           Semester {sem.number}
                         </h4>
                         <div className="flex-1 h-px bg-stone-200" />
-                        <span className="text-[10px] font-bold text-stone-400 bg-white border border-stone-200 px-2 py-0.5 rounded-full">
+                        <span className="text-[10px] font-bold text-stone-400 bg-white border border-stone-200 px-2 py-0.5 rounded-full flex-shrink-0">
                           {sem.courses?.length} courses
                         </span>
                       </div>
@@ -1432,7 +1934,7 @@ const CurriculumCompiler = () => {
                           return (
                             <div
                               key={course.code}
-                              className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white hover:border-amber-300 hover:shadow-sm transition-all"
+                              className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white hover:border-amber-300 hover:shadow-sm transition-all gap-2"
                             >
                               <div className="flex items-center gap-3 min-w-0">
                                 <div
@@ -1442,12 +1944,12 @@ const CurriculumCompiler = () => {
                                   <p className="text-xs font-bold text-stone-800 truncate">
                                     {course.code}
                                   </p>
-                                  <p className="text-[10px] text-stone-500 truncate w-32">
+                                  <p className="text-[10px] text-stone-500 truncate">
                                     {course.title}
                                   </p>
                                 </div>
                               </div>
-                              <div className="flex flex-col items-end gap-1 flex-shrink-0 ml-2">
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                 <span
                                   className={`text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider border border-white/50 ${S.badge}`}
                                 >
@@ -1467,11 +1969,13 @@ const CurriculumCompiler = () => {
                   ))}
                 </div>
 
-                <div className="p-5 bg-white border-t border-stone-200 flex items-center justify-between gap-4 flex-shrink-0">
-                  <div className="flex items-center gap-2.5 text-stone-600 text-sm bg-stone-50 px-4 py-2 rounded-xl border border-stone-100">
-                    <FileText size={16} className="text-amber-600" />
-                    Book contains <strong>1 PD</strong> and{" "}
-                    <strong>{readiness.totalApproved} CDs</strong>.
+                <div className="p-3 sm:p-5 bg-white border-t border-stone-200 flex items-center justify-between gap-4 flex-shrink-0">
+                  <div className="flex items-center gap-2.5 text-stone-600 text-xs sm:text-sm bg-stone-50 px-3 sm:px-4 py-2 rounded-xl border border-stone-100">
+                    <FileText size={16} className="text-amber-600 flex-shrink-0" />
+                    <span className="truncate">
+                      Book contains <strong>1 PD</strong> and{" "}
+                      <strong>{readiness.totalApproved} CDs</strong>.
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1495,6 +1999,7 @@ const CurriculumCompiler = () => {
         onClose={() => setFullPreviewOpen(false)}
         frontMatterPages={frontMatterPages.map((p) => ({
           ...p,
+          content: absolutizeImageUrls(p.content),
           displayName: getDisplayName(p.name),
         }))}
         selectedCDs={getSelectedCDs}
@@ -1506,197 +2011,26 @@ const CurriculumCompiler = () => {
         curriculumConfig={curriculumConfig}
       />
 
-      {/* ============================================================
-          FRONT MATTER EDITOR MODAL (inline)
-      ============================================================ */}
-      {pageEditorOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-5">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[1180px] h-[88vh] min-h-[560px] flex flex-col overflow-hidden border border-stone-200">
-            {/* Header */}
-            <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-stone-200 bg-white flex-shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
-                  <FileCode size={18} className="text-amber-700" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-black text-stone-900 truncate">
-                      Front Matter Editor
-                    </h2>
-                    {selectedPage && (
-                      <span className="hidden sm:inline-flex text-[10px] font-bold text-stone-500 bg-stone-100 border border-stone-200 px-2 py-1 rounded-full">
-                        {getDisplayName(selectedPage.name)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-stone-500 mt-0.5 truncate">
-                    Edit pages directly. Click an image to replace it.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button
-                  onClick={handleEditorReset}
-                  disabled={editorResetting || !selectedPage}
-                  title="Restore this page to its default content"
-                  className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-stone-600 border border-stone-300 rounded-lg hover:bg-stone-100 hover:border-stone-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {editorResetting ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <RotateCcw size={13} />
-                  )}
-                  Reset to Default
-                </button>
-
-                <button
-                  onClick={handleEditorSave}
-                  disabled={editorSaving || !editorDirty || !selectedPage}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {editorSaving ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <Save size={13} />
-                  )}
-                  {editorDirty ? "Save Changes" : "Saved"}
-                </button>
-
-                <button
-                  onClick={handleEditorClose}
-                  title="Close editor"
-                  className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition"
-                >
-                  <X size={17} />
-                </button>
-              </div>
-            </div>
-
-            {/* Body */}
-            <div className="flex flex-1 min-h-0">
-              {/* Sidebar */}
-              <aside className="w-56 flex-shrink-0 border-r border-stone-200 bg-stone-50/70 overflow-y-auto">
-                <div className="p-3">
-                  <div className="flex items-center justify-between px-1 mb-2.5">
-                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
-                      Pages
-                    </p>
-                    <span className="text-[10px] font-bold text-stone-400">
-                      {frontMatterPages.length}
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    {frontMatterPages.map((page) => {
-                      const isActive = page.name === selectedPage?.name;
-                      return (
-                        <button
-                          key={page.name}
-                          onClick={() => handleSelectEditorPage(page)}
-                          className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition-all ${
-                            isActive
-                              ? "bg-amber-100 text-amber-900 font-bold shadow-sm"
-                              : "text-stone-600 hover:bg-white hover:text-stone-900"
-                          }`}
-                        >
-                          <span className="block truncate">
-                            {getDisplayName(page.name)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </aside>
-
-              {/* Main editor */}
-              <main className="flex-1 flex flex-col min-w-0 bg-stone-100">
-                {/* Tab bar */}
-                <div className="h-11 flex items-end gap-1 px-4 border-b border-stone-200 bg-white flex-shrink-0">
-                  <button
-                    onClick={() => setEditorTab("visual")}
-                    className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-t-lg transition-colors ${
-                      editorTab === "visual"
-                        ? "bg-stone-50 border-b-2 border-amber-600 text-amber-700"
-                        : "text-stone-500 hover:text-stone-700 hover:bg-stone-50"
-                    }`}
-                  >
-                    <Eye size={13} /> Visual
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (editorTab === "visual") {
-                        setEditorDraft(serializeVisualHtml());
-                      }
-                      setEditorTab("html");
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-t-lg transition-colors ${
-                      editorTab === "html"
-                        ? "bg-stone-50 border-b-2 border-amber-600 text-amber-700"
-                        : "text-stone-500 hover:text-stone-700 hover:bg-stone-50"
-                    }`}
-                  >
-                    <FileCode size={13} /> HTML
-                  </button>
-
-                  {editorDirty && (
-                    <span className="ml-auto mr-2 mb-2 flex items-center gap-1 text-[10px] text-amber-600 font-bold">
-                      <AlertTriangle size={11} /> Unsaved changes
-                    </span>
-                  )}
-                </div>
-
-                {/* Content area */}
-                <div className="flex-1 min-h-0 overflow-hidden p-4 sm:p-5">
-                  {editorTab === "visual" ? (
-                    <div className="h-full overflow-y-auto rounded-xl border border-stone-200 bg-white shadow-sm">
-                      <div className="min-h-full px-6 py-7 sm:px-10 sm:py-9">
-                        <div
-                          ref={editorRef}
-                          contentEditable
-                          suppressContentEditableWarning
-                          onInput={handleEditorInput}
-                          onClick={handleEditorImageClick}
-                          className="editor-document outline-none min-h-full text-stone-800 [&_img[data-editor-image='true']]:cursor-pointer [&_img[data-editor-image='true']]:transition-all [&_img[data-editor-image='true']:hover]:opacity-80 [&_img[data-editor-image='true']:hover]:ring-4 [&_img[data-editor-image='true']:hover]:ring-amber-200 [&_img[data-editor-image='true']:hover]:rounded-md"
-                          style={{
-                            fontFamily: "'Times New Roman', Times, serif",
-                            fontSize: "14px",
-                            lineHeight: 1.6,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <textarea
-                      value={editorDraft}
-                      onChange={(event) => setEditorDraft(event.target.value)}
-                      spellCheck={false}
-                      className="w-full h-full bg-slate-950 text-green-300 font-mono text-xs leading-6 p-4 rounded-xl border border-slate-800 outline-none resize-none focus:ring-2 focus:ring-amber-200"
-                    />
-                  )}
-                </div>
-
-                {/* Helpful footer */}
-                <div className="h-9 flex items-center justify-between px-4 border-t border-stone-200 bg-white text-[10px] text-stone-400 flex-shrink-0">
-                  <span>
-                    {editorTab === "visual"
-                      ? "Tip: click an image to replace it"
-                      : "HTML changes are applied when you switch to Visual"}
-                  </span>
-                  {editorUploadingImage && (
-                    <span className="flex items-center gap-1.5 text-amber-600 font-bold">
-                      <Loader2 size={11} className="animate-spin" />
-                      Uploading image…
-                    </span>
-                  )}
-                </div>
-              </main>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Front Matter Editor */}
+      <CleanEditorModal
+        isOpen={pageEditorOpen}
+        onClose={() => {
+          log("Closing editor modal");
+          setPageEditorOpen(false);
+          setSelectedPage(null);
+          setPageContent("");
+        }}
+        pageName={selectedPage ? getDisplayName(selectedPage.name) : ""}
+        htmlContent={pageContent}
+        onSave={handleSavePage}
+        isSaving={isSavingPage}
+        frontMatterPages={frontMatterPages}
+        getDisplayName={getDisplayName}
+        onPageSelect={handlePageSelect}
+        currentPage={selectedPage}
+        axios={axios}
+        adminToken={adminToken}
+      />
     </AdminLayout>
   );
 };
