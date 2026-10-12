@@ -106,7 +106,7 @@ const isNumericSem = (s) => semOrder(s) !== 999;
 ============================================================ */
 
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BASE_URL) ||
   "http://localhost:5000";
 
 log("API_BASE =", API_BASE);
