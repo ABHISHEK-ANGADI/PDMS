@@ -1576,26 +1576,45 @@ export const getCDDetailById = async (req, res) => {
 let _transporter = null;
 
 const sendMail = async ({ to, subject, html }) => {
-  if (!_transporter) {
-    const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
-    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-      throw new Error("SMTP env vars missing (check .env is loaded)");
-    }
-    _transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: Number(SMTP_PORT) || 587,
-      secure: String(SMTP_SECURE) === "true",
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.MAIL_FROM_EMAIL;
+  if (!apiKey || !fromEmail) {
+    throw new Error("BREVO_API_KEY / MAIL_FROM_EMAIL missing in environment");
   }
-  const info = await _transporter.sendMail({
-    from: process.env.MAIL_FROM || process.env.SMTP_USER,
-    to,
-    subject,
-    html,
+
+  console.log("Brevo configuration:", {
+  keyPresent: Boolean(process.env.BREVO_API_KEY),
+  keyLength: process.env.BREVO_API_KEY?.length,
+  keyPrefix: process.env.BREVO_API_KEY?.slice(0, 10),
+  sender: process.env.MAIL_FROM_EMAIL,
+});
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: {
+        name: process.env.MAIL_FROM_NAME || "GMU Curriculum Portal",
+        email: fromEmail,
+      },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+    signal: AbortSignal.timeout(15000),
   });
-  console.log("📧 Mail sent to", to, "→", info.response);
-  return info;
+
+  
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Brevo ${response.status}: ${body.message || "send failed"}`);
+  }
+  console.log("Mail sent to", to, "→", body.messageId);
+  return body;
 };
 
 const esc = (v) =>
@@ -1698,7 +1717,7 @@ const notifyCDAssignees = async (pd, adminName) => {
   const creators = await Creater.find({
     $or: [{ _id: { $in: ids } }, { email: { $in: emails } }],
   }).select("name email");
-  console.log(`👤 Matched ${creators.length} creator(s)`);
+
 
   const byId = new Map(creators.map((c) => [String(c._id), c]));
   const byEmail = new Map(creators.map((c) => [String(c.email).toLowerCase(), c]));
