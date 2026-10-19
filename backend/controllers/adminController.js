@@ -11,6 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { generateDocument, getDocumentInfo } from "../services/docGenerator.js";
+import nodemailer from "nodemailer";
 
 // Get __dirname 
 const __filename = fileURLToPath(import.meta.url);
@@ -397,78 +398,6 @@ export const getCDDetail = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. REVIEW ACTIONS (Approve / Reject) - UPDATED TO SAVE COMMENTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const processPDReview = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, rejectionMessage } = req.body;
-    const adminId = req.admin._id;
-
-    const updatedPD = await PD.findOneAndUpdate(
-      { _id: id, approved_by: adminId },
-      {
-        status: status,
-        change_summary: rejectionMessage || "",
-        review_comment: rejectionMessage || "",
-        approved_at: status === "approved" ? new Date() : null,
-      },
-      { new: true },
-    );
-
-    if (!updatedPD)
-      return res
-        .status(403)
-        .json({ success: false, message: "Unauthorized or not found" });
-
-    res.status(200).json({
-      success: true,
-      message: `PD ${status} successfully`,
-      data: updatedPD,
-    });
-  } catch (error) {
-    console.error("processPDReview:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const processCDReview = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, rejectionMessage } = req.body;
-
-    const filter = await getJurisdictionFilter(req.admin);
-
-    const updatedCD = await CourseDocument.findOneAndUpdate(
-      { _id: id, ...filter },
-      {
-        status,
-        rejectionMessage: rejectionMessage || "",
-        reviewComment: rejectionMessage || "",
-        approvalDate: status === "Approved" ? new Date() : null,
-        approvedBy: status === "Approved" ? req.admin._id : null,
-      },
-      { new: true },
-    );
-
-    if (!updatedCD) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Unauthorized or not found" });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `Course Document ${status === "Approved" ? "Approved" : "Returned for Revision"} successfully.`,
-      data: updatedCD,
-    });
-  } catch (error) {
-    console.error("processCDReview:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. CURRICULUM COMPILER & VERSIONS (UPDATED FOR 2026 SCHEMA)
@@ -1640,5 +1569,352 @@ export const getCDDetailById = async (req, res) => {
   } catch (err) {
     console.error("getCDDetailById:", err);
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ─── SIMPLE MAIL HELPERS ─────────────────────────────────────────────────────
+let _transporter = null;
+
+const sendMail = async ({ to, subject, html }) => {
+  if (!_transporter) {
+    const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+      throw new Error("SMTP env vars missing (check .env is loaded)");
+    }
+    _transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT) || 587,
+      secure: String(SMTP_SECURE) === "true",
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+  }
+  const info = await _transporter.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    html,
+  });
+  console.log("📧 Mail sent to", to, "→", info.response);
+  return info;
+};
+
+const esc = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const mailWrap = (title, body) => `
+  <div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#1e293b;">
+    <div style="background:#1e3a8a;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;">
+      <h3 style="margin:0;">${title}</h3>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-top:none;padding:18px;border-radius:0 0 8px 8px;">
+      ${body}
+      <p style="font-size:12px;color:#94a3b8;margin-top:20px;">Automated message from the Curriculum Portal.</p>
+    </div>
+  </div>`;
+
+// Field names that may hold the CD assignee on a course inside pd_data
+const ASSIGNEE_KEYS = [
+  "assigned_to", "assignedTo", "assignee", "assignee_id",
+  "assigneeEmail", "assignee_email", "cd_creator",
+];
+
+const getAssigneeRef = (course) => {
+  const isId = (v) => typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v);
+  const isEmail = (v) => typeof v === "string" && /^\S+@\S+\.\S+$/.test(v);
+  const refs = { ids: [], emails: [] };
+
+  const scan = (val, key, depth = 0) => {
+    if (val == null || depth > 2) return;
+    if (key === "_id" && depth === 0) return; // skip the course's own id
+    if (isId(val)) refs.ids.push(val);
+    else if (isEmail(val)) refs.emails.push(val.toLowerCase().trim());
+    else if (typeof val === "object") {
+      if (val._bsontype === "ObjectId" || val._bsontype === "ObjectID") {
+        refs.ids.push(String(val));
+        return;
+      }
+      Object.entries(val).forEach(([k, v]) => scan(v, k, depth + 1));
+    }
+  };
+
+  Object.entries(course || {}).forEach(([k, v]) => scan(v, k));
+  return refs.ids.length || refs.emails.length ? refs : null;
+};
+
+// Collect every course from the PD (2024 + 2026 schema) with its assignee
+const collectPDCourses = (pd) => {
+  const out = [];
+  const d = pd.pd_data || {};
+  const push = (c, context) => {
+    if (!c?.code) return;
+    out.push({
+      code: c.code,
+      title: c.title || "",
+      credits: c.credits ?? c.total_credits ?? c.credit ?? "",
+      context,
+      assignee: getAssigneeRef(c),
+    });
+  };
+
+  d.semesters?.forEach((sem) => {
+    sem.courses?.forEach((c) => push(c, `Semester ${sem.sem_no}`));
+    sem.categories?.forEach((cat) =>
+      cat.courses?.forEach((c) => push(c, `Semester ${sem.sem_no} (${cat.categoryName})`)),
+    );
+  });
+  d.prof_electives?.forEach((g) => g.courses?.forEach((c) => push(c, "Professional Elective")));
+  d.open_electives?.forEach((g) => g.courses?.forEach((c) => push(c, "Open Elective")));
+  d.section4?.professionalElectives?.forEach((g) =>
+    g.courses?.forEach((c) => push(c, "Professional Elective")),
+  );
+  d.section4?.openElectives?.forEach((g) =>
+    g.courses?.forEach((c) => push(c, "Open Elective")),
+  );
+  d.section4?.technicalCompetencyCourses?.forEach((c) => push(c, "Technical Competency"));
+
+  return out;
+};
+
+// PD approved → one mail per assigned creator, listing their courses
+const notifyCDAssignees = async (pd, adminName) => {
+  const all = collectPDCourses(pd);
+  const assigned = all.filter((c) => c.assignee);
+  console.log(`📋 PD ${pd.program_id}: ${all.length} courses, ${assigned.length} with assignee refs`);
+  if (assigned.length === 0) {
+    console.log("⚠️ No assignee found. Sample course:", JSON.stringify(
+      pd.pd_data?.semesters?.[0]?.courses?.[0] ||
+      pd.pd_data?.semesters?.[0]?.categories?.[0]?.courses?.[0],
+    ));
+    return;
+  }
+
+  const ids = [...new Set(assigned.flatMap((c) => c.assignee.ids))];
+  const emails = [...new Set(assigned.flatMap((c) => c.assignee.emails))];
+
+  const creators = await Creater.find({
+    $or: [{ _id: { $in: ids } }, { email: { $in: emails } }],
+  }).select("name email");
+  console.log(`👤 Matched ${creators.length} creator(s)`);
+
+  const byId = new Map(creators.map((c) => [String(c._id), c]));
+  const byEmail = new Map(creators.map((c) => [String(c.email).toLowerCase(), c]));
+
+  // Group courses per creator (one mail per person)
+  const grouped = new Map();
+  for (const course of assigned) {
+    const creator =
+      course.assignee.ids.map((i) => byId.get(i)).find(Boolean) ||
+      course.assignee.emails.map((e) => byEmail.get(e)).find(Boolean);
+    if (!creator?.email) {
+      console.log("⚠️ No Creater match for course", course.code, course.assignee);
+      continue;
+    }
+    const key = String(creator._id);
+    if (!grouped.has(key)) grouped.set(key, { creator, courses: [] });
+    grouped.get(key).courses.push(course);
+  }
+
+  const base = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+  const defaultPassword = process.env.CREATOR_DEFAULT_PASSWORD || "GMIT@2026";
+  const cell = 'style="padding:8px;border:1px solid #e2e8f0;"';
+
+  for (const { creator, courses } of grouped.values()) {
+    const rows = courses
+      .map(
+        (c) => `<tr>
+          <td ${cell}>${esc(c.code)}</td>
+          <td ${cell}>${esc(c.title)}</td>
+          <td ${cell}>${esc(c.context)}</td>
+          <td ${cell}>${esc(c.credits)}</td>
+        </tr>`,
+      )
+      .join("");
+
+    const html = mailWrap(
+      "Program Document Approved – Create your CD",
+      `<p>Dear ${esc(creator.name)},</p>
+       <p>The Program Document <b>${esc(pd.program_name)} (${esc(pd.program_id)})</b>
+       has been approved by <b>${esc(adminName || "Admin")}</b>.
+       You can now create the Course Document (CD) for your assigned course(s):</p>
+
+       <table style="border-collapse:collapse;width:100%;font-size:14px;">
+         <tr style="background:#f1f5f9;">
+           <th ${cell}>Code</th><th ${cell}>Title</th><th ${cell}>Semester / Category</th><th ${cell}>Credits</th>
+         </tr>
+         ${rows}
+       </table>
+
+       <p style="font-size:14px;">
+         <b>Program:</b> ${esc(pd.program_name)}<br/>
+         <b>Program Code:</b> ${esc(pd.program_id)}<br/>
+         <b>Scheme Year:</b> ${esc(pd.scheme_year)}<br/>
+         <b>PD Version:</b> ${esc(pd.version_no)}<br/>
+         <b>Effective AY:</b> ${esc(pd.effective_ay || "-")}
+       </p>
+
+       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14px;">
+         <b>Your login details (for reference)</b><br/>
+         <b>Login Email:</b> ${esc(creator.email)}<br/>
+         <b>Login Password:</b> ${esc(defaultPassword)}<br/>
+         <span style="font-size:12px;color:#64748b;">Please change your password after your first login.</span>
+       </div>
+
+       <h4 style="margin:18px 0 8px;">Steps to create your Course Document</h4>
+       <ol style="font-size:14px;line-height:1.7;padding-left:20px;margin:0;">
+         <li>Log in with the email and password above${base ? ` at <a href="${base}">${base}</a>` : ""}.</li>
+         <li>Open the <b>Course Document Editor</b> and click <b>Assigned</b>. Find your course and click <b>Load Task</b>.</li>
+         <li><b>Important:</b> before you start, click the <b>Latest</b> button. It fetches the most recent version of this course so you continue from it instead of starting blank. If no earlier version exists, you will start a new draft (v1.0.0).</li>
+         <li>Fill in the four steps, using <b>Save &amp; Next</b> or <b>Save Draft</b> as you go:
+           <ul style="margin:4px 0;">
+             <li><b>Step 1 – Course Info:</b> identity details, credits and hours. You can also import from a PDF.</li>
+             <li><b>Step 2 – Course Details:</b> aims, objectives, outcomes (COs), outcome mapping, course content and resources.</li>
+             <li><b>Step 3 – Teaching &amp; Assess:</b> teaching schedule, assessment weights, grading criterion and attainment.</li>
+             <li><b>Step 4 – Other Details:</b> assignment details and academic integrity.</li>
+           </ul>
+         </li>
+         <li>Click <b>Preview</b> to check the final document.</li>
+         <li>Click <b>Submit</b>, select the Admin / Reviewer, then <b>Confirm Submit</b>.</li>
+         <li><b>Versions:</b> saving a draft updates that same draft. Once a version is <i>Submitted</i> or <i>Approved</i>, your next save or submit creates a <b>new version</b> (for example 1.0.0 → 1.0.1), and the earlier version stays in history. Open <b>Sections → Version History</b> to see them all.</li>
+         <li>If the Admin returns your CD with comments, click <b>Latest</b>, make the changes and submit again. You will receive an email once it is approved.</li>
+       </ol>
+
+       ${base ? `<p><a href="${base}/creator/dashboard" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Open Dashboard</a></p>` : ""}`,
+    );
+
+    try {
+      await sendMail({
+        to: creator.email,
+        subject: `PD Approved – Create CDs for ${pd.program_name} (v${pd.version_no})`,
+        html,
+      });
+    } catch (err) {
+      console.error("❌ PD approval mail failed for", creator.email, "→", err.message);
+    }
+  }
+};
+
+// CD approved → mail the creator of that CD
+const notifyCDApproved = async (cd, adminName) => {
+  const creator = await Creater.findById(cd.createdBy).select("name email");
+  if (!creator?.email) return;
+
+  const base = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
+  const defaultPassword = process.env.CREATOR_DEFAULT_PASSWORD || "GMIT@2026";
+
+  const html = mailWrap(
+    "Course Document Approved",
+    `<p>Dear ${esc(creator.name)},</p>
+     <p>Your Course Document has been <b style="color:#16a34a;">approved</b> by
+     <b>${esc(adminName || "Admin")}</b>.</p>
+     <p style="font-size:14px;">
+       <b>Course Code:</b> ${esc(cd.courseCode)}<br/>
+       <b>Course Title:</b> ${esc(cd.courseTitle)}<br/>
+       <b>Program:</b> ${esc(cd.programName || "-")}<br/>
+       <b>CD Version:</b> ${esc(cd.cdVersion)}<br/>
+       <b>Approved On:</b> ${new Date(cd.approvalDate || Date.now()).toDateString()}<br/>
+       <b>Login Email:</b> ${esc(creator.email)}<br/>
+       <b>Login Password:</b> ${esc(defaultPassword)}
+     </p>
+     <p style="font-size:13px;color:#475569;">
+       To revise this course later, click <b>Latest</b> in the Course Document Editor first.
+       Any save after approval creates a new version.
+     </p>
+     ${base ? `<p><a href="${base}/creator/dashboard" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Open Dashboard</a></p>` : ""}`,
+  );
+
+  await sendMail({
+    to: creator.email,
+    subject: `CD Approved – ${cd.courseCode} ${cd.courseTitle} (v${cd.cdVersion})`,
+    html,
+  });
+};
+
+
+export const processPDReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, rejectionMessage } = req.body;
+    const adminId = req.admin._id;
+
+    const existing = await PD.findOne({ _id: id, approved_by: adminId }).select("status");
+    if (!existing)
+      return res
+        .status(403)
+        .json({ success: false, message: "Unauthorized or not found" });
+
+    const updatedPD = await PD.findOneAndUpdate(
+      { _id: id, approved_by: adminId },
+      {
+        status: status,
+        change_summary: rejectionMessage || "",
+        review_comment: rejectionMessage || "",
+        approved_at: status === "approved" ? new Date() : null,
+        updated_at: new Date(),
+      },
+      { new: true },
+    );
+
+    // Notify assigned CD creators only on a fresh approval (runs in background)
+    if (status === "approved" && existing.status !== "approved") {
+      notifyCDAssignees(updatedPD, req.admin.name).catch((err) =>
+        console.error("notifyCDAssignees:", err.message),
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `PD ${status} successfully`,
+      data: updatedPD,
+    });
+  } catch (error) {
+    console.error("processPDReview:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const processCDReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, rejectionMessage } = req.body;
+
+    const filter = await getJurisdictionFilter(req.admin);
+
+    const existing = await CourseDocument.findOne({ _id: id, ...filter }).select("status");
+    if (!existing) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Unauthorized or not found" });
+    }
+
+    const updatedCD = await CourseDocument.findOneAndUpdate(
+      { _id: id, ...filter },
+      {
+        status,
+        rejectionMessage: rejectionMessage || "",
+        reviewComment: rejectionMessage || "",
+        approvalDate: status === "Approved" ? new Date() : null,
+        approvedBy: status === "Approved" ? req.admin._id : null,
+      },
+      { new: true },
+    );
+
+    // Notify the CD creator only on a fresh approval (runs in background)
+    if (status === "Approved" && existing.status !== "Approved") {
+      notifyCDApproved(updatedCD, req.admin.name).catch((err) =>
+        console.error("notifyCDApproved:", err.message),
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Course Document ${status === "Approved" ? "Approved" : "Returned for Revision"} successfully.`,
+      data: updatedCD,
+    });
+  } catch (error) {
+    console.error("processCDReview:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
