@@ -375,7 +375,7 @@ const CreatorDashboard = () => {
   });
   const [recentCDs, setRecentCDs] = useState([]);
 
-  const [assignedCDs, setAssignedCDs] = useState([]); // NEW: Assigned Courses
+  const [assignedCDs, setAssignedCDs] = useState([]); 
 
   // ── Fetch all dashboard data ──────────────────────────────────────────────
   const fetchAll = useCallback(
@@ -390,7 +390,7 @@ const CreatorDashboard = () => {
           axios.get("/api/creater/cd/dashboard-stats", {
             headers: { createrToken },
           }),
-          axios.get("/api/creater/cd/assigned", { headers: { createrToken } }), // Fetch Assigned!
+          axios.get("/api/creater/cd/assigned", { headers: { createrToken } }),
         ]);
         if (pdRes.data.success) {
           setPdStats(pdRes.data.stats);
@@ -436,74 +436,34 @@ const CreatorDashboard = () => {
   // Load an assigned course by injecting it directly into Local Storage and redirecting
   const handleStartAssignedDraft = (course) => {
     const DEFAULT_OUTCOME_HEADERS = [
-      "CO\\PO",
-      "PO1",
-      "PO2",
-      "PO3",
-      "PO4",
-      "PO5",
-      "PO6",
-      "PO7",
-      "PO8",
-      "PO9",
-      "PO10",
-      "PO11",
-      "PO12",
-      "PSO1",
-      "PSO2",
-      "PSO3",
+      "CO\\PO", "PO1", "PO2", "PO3", "PO4", "PO5", "PO6", "PO7", "PO8", "PO9",
+      "PO10", "PO11", "PO12", "PSO1", "PSO2", "PSO3",
     ];
 
-    // Create a perfectly safe, blank skeleton CD
     const safeSkeletonData = {
       courseCode: course.courseCode || "",
       courseTitle: course.courseTitle || "",
       programCode: course.programCode || "",
       programTitle: course.programName || "",
-      schoolCode: "",
-      schoolTitle: "",
-      departmentCode: "",
-      department: "",
-      facultyCode: "",
-      facultyTitle: "",
-      offeringDepartment: "",
-      facultyMember: "",
+      schoolCode: "", schoolTitle: "", departmentCode: "", department: "",
+      facultyCode: "", facultyTitle: "", offeringDepartment: "", facultyMember: "",
       semesterDuration: "",
       totalHours: 0,
       credits: { L: 0, T: 0, P: 0, total: course.credits || 0 },
-      aimsSummary: "",
-      objectives: "",
-      courseContent: "",
-      gradingCriterion: "",
-      courseOutcomesHtml: "",
-      outcomeMapHtml: "",
-      assessmentWeightHtml: "",
+      aimsSummary: "", objectives: "", courseContent: "", gradingCriterion: "",
+      courseOutcomesHtml: "", outcomeMapHtml: "", assessmentWeightHtml: "",
       courseOutcomes: [],
       outcomeMap: {
         matrix: [
           DEFAULT_OUTCOME_HEADERS,
-          ...Array.from({ length: 6 }, (_, i) => [
-            `CO${i + 1}`,
-            ...Array(15).fill(""),
-          ]),
+          ...Array.from({ length: 6 }, (_, i) => [`CO${i + 1}`, ...Array(15).fill("")]),
         ],
         raw: "",
       },
       resources: { textBooks: [], references: [], otherResources: [] },
       teaching: [],
       assessmentWeight: Array.from({ length: 6 }, (_, i) => ({
-        co: `CO${i + 1}`,
-        q1: 0,
-        q2: 0,
-        q3: 0,
-        t1: 0,
-        t2: 0,
-        t3: 0,
-        a1: 0,
-        a2: 0,
-        see: 0,
-        cie: 0,
-        total: 0,
+        co: `CO${i + 1}`, q1: 0, q2: 0, q3: 0, t1: 0, t2: 0, t3: 0, a1: 0, a2: 0, see: 0, cie: 0, total: 0,
       })),
       attainmentCalculations: { recordingMarks: "", settingTargets: "" },
       otherDetails: { assignmentDetails: "", academicIntegrity: "" },
@@ -597,7 +557,7 @@ const CreatorDashboard = () => {
           </div>
         </div>
 
-        {/* ── NEW: Assigned Tasks Section ─────────────────────────────────── */}
+        {/* ── ASSIGNED TASKS SECTION (WITH STATUS BADGES) ─────────────────── */}
         {assignedCDs.length > 0 && (
           <div className="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl shadow-md p-1">
             <div className="bg-white rounded-xl overflow-hidden">
@@ -609,43 +569,82 @@ const CreatorDashboard = () => {
                   </h3>
                 </div>
                 <span className="text-xs font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
-                  {assignedCDs.length} Pending
+                  {assignedCDs.length} Total
                 </span>
               </div>
-              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[300px] overflow-y-auto">
-                {assignedCDs.map((c, i) => (
-                  <div
-                    key={i}
-                    className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-indigo-300 hover:shadow-md transition-all group"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-gray-800 text-sm group-hover:text-indigo-700 transition-colors">
-                          {c.courseCode}
-                        </span>
-                        <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase">
-                          {c.type || "Theory"}
-                        </span>
-                      </div>
-                      <p className="text-xs font-semibold text-gray-600 truncate mb-1.5">
-                        {c.courseTitle}
-                      </p>
-                      <div className="flex items-center gap-2 text-[10px] text-gray-500 font-medium">
-                        <span className="truncate max-w-[120px]">
-                          {c.programName}
-                        </span>
-                        <span>•</span>
-                        <span>{c.context}</span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleStartAssignedDraft(c)}
-                      className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm transition-colors flex-shrink-0"
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[350px] overflow-y-auto">
+                {assignedCDs.map((c, i) => {
+                  // Helper to determine badge colors based on status
+                  const getBadgeStyle = (status) => {
+                    switch (status) {
+                      case "Approved": return "bg-emerald-50 text-emerald-700 border-emerald-200";
+                      case "UnderReview": return "bg-yellow-50 text-yellow-700 border-yellow-200";
+                      case "Draft": return "bg-gray-100 text-gray-600 border-gray-200";
+                      default: return "bg-blue-50 text-blue-700 border-blue-200";
+                    }
+                  };
+
+                  return (
+                    <div
+                      key={i}
+                      className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-indigo-300 hover:shadow-md transition-all group"
                     >
-                      <FileText size={14} /> Start Drafting
-                    </button>
-                  </div>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="font-bold text-gray-800 text-sm group-hover:text-indigo-700 transition-colors">
+                            {c.courseCode}
+                          </span>
+                          <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase">
+                            {c.type || "Theory"}
+                          </span>
+                          
+                          {/* STATUS BADGE */}
+                          {c.cdStatus !== "Not Started" && (
+                            <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded uppercase ${getBadgeStyle(c.cdStatus)}`}>
+                              {c.cdStatus} {c.cdVersion ? `(v${c.cdVersion})` : ""}
+                            </span>
+                          )}
+                        </div>
+                        
+                        <p className="text-xs font-semibold text-gray-600 truncate mb-1.5">
+                          {c.courseTitle}
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px] text-gray-500 font-medium">
+                          <span className="truncate max-w-[120px]">
+                            {c.programName}
+                          </span>
+                          <span>•</span>
+                          <span>{c.context}</span>
+                        </div>
+                      </div>
+                      
+                      {/* DYNAMIC BUTTONS (Now labels for In Review and Approved) */}
+                      {c.cdStatus === "Not Started" ? (
+                        <button
+                          onClick={() => handleStartAssignedDraft(c)}
+                          className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm transition-colors flex-shrink-0"
+                        >
+                          <FileText size={14} /> Start Drafting
+                        </button>
+                      ) : c.cdStatus === "Draft" ? (
+                        <button
+                          onClick={() => handleCDEdit(c.cdId)}
+                          className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-gray-800 text-white rounded-lg text-xs font-bold hover:bg-gray-900 shadow-sm transition-colors flex-shrink-0"
+                        >
+                          <Edit size={14} /> Continue Draft
+                        </button>
+                      ) : c.cdStatus === "UnderReview" ? (
+                        <div className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-lg text-xs font-bold flex-shrink-0 cursor-default">
+                          <Clock size={14} /> In Review
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold flex-shrink-0 cursor-default">
+                          <CheckCircle size={14} /> Approved
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -708,36 +707,13 @@ const CreatorDashboard = () => {
             </div>
             <div className="grid grid-cols-3 gap-2">
               {[
-                {
-                  label: "Drafts",
-                  val: pdStats.drafts,
-                  color: "text-gray-600",
-                  bg: "bg-gray-50",
-                  border: "border-gray-200",
-                },
-                {
-                  label: "In Review",
-                  val: pdStats.underReview,
-                  color: "text-yellow-700",
-                  bg: "bg-yellow-50",
-                  border: "border-yellow-200",
-                },
-                {
-                  label: "Approved",
-                  val: pdStats.approved,
-                  color: "text-emerald-700",
-                  bg: "bg-emerald-50",
-                  border: "border-emerald-200",
-                },
+                { label: "Drafts", val: pdStats.drafts, color: "text-gray-600", bg: "bg-gray-50", border: "border-gray-200" },
+                { label: "In Review", val: pdStats.underReview, color: "text-yellow-700", bg: "bg-yellow-50", border: "border-yellow-200" },
+                { label: "Approved", val: pdStats.approved, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
               ].map(({ label, val, color, bg, border }) => (
-                <div
-                  key={label}
-                  className={`${bg} border ${border} rounded-xl px-3 py-2.5 text-center`}
-                >
+                <div key={label} className={`${bg} border ${border} rounded-xl px-3 py-2.5 text-center`}>
                   <p className={`text-xl font-bold ${color}`}>{val}</p>
-                  <p className="text-[10px] text-gray-400 font-medium mt-0.5">
-                    {label}
-                  </p>
+                  <p className="text-[10px] text-gray-400 font-medium mt-0.5">{label}</p>
                 </div>
               ))}
             </div>
@@ -766,36 +742,13 @@ const CreatorDashboard = () => {
             </div>
             <div className="grid grid-cols-3 gap-2">
               {[
-                {
-                  label: "Drafts",
-                  val: cdStats.drafts,
-                  color: "text-gray-600",
-                  bg: "bg-gray-50",
-                  border: "border-gray-200",
-                },
-                {
-                  label: "In Review",
-                  val: cdStats.underReview,
-                  color: "text-yellow-700",
-                  bg: "bg-yellow-50",
-                  border: "border-yellow-200",
-                },
-                {
-                  label: "Approved",
-                  val: cdStats.approved,
-                  color: "text-emerald-700",
-                  bg: "bg-emerald-50",
-                  border: "border-emerald-200",
-                },
+                { label: "Drafts", val: cdStats.drafts, color: "text-gray-600", bg: "bg-gray-50", border: "border-gray-200" },
+                { label: "In Review", val: cdStats.underReview, color: "text-yellow-700", bg: "bg-yellow-50", border: "border-yellow-200" },
+                { label: "Approved", val: cdStats.approved, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
               ].map(({ label, val, color, bg, border }) => (
-                <div
-                  key={label}
-                  className={`${bg} border ${border} rounded-xl px-3 py-2.5 text-center`}
-                >
+                <div key={label} className={`${bg} border ${border} rounded-xl px-3 py-2.5 text-center`}>
                   <p className={`text-xl font-bold ${color}`}>{val}</p>
-                  <p className="text-[10px] text-gray-400 font-medium mt-0.5">
-                    {label}
-                  </p>
+                  <p className="text-[10px] text-gray-400 font-medium mt-0.5">{label}</p>
                 </div>
               ))}
             </div>
@@ -811,27 +764,15 @@ const CreatorDashboard = () => {
           action={
             <div className="flex items-center gap-2">
               <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-1">
-                <TabBtn
-                  active={activeTab === "pd"}
-                  onClick={() => setActiveTab("pd")}
-                  count={recentPDs.length}
-                >
+                <TabBtn active={activeTab === "pd"} onClick={() => setActiveTab("pd")} count={recentPDs.length}>
                   <GraduationCap size={12} /> PD
                 </TabBtn>
-                <TabBtn
-                  active={activeTab === "cd"}
-                  onClick={() => setActiveTab("cd")}
-                  count={recentCDs.length}
-                >
+                <TabBtn active={activeTab === "cd"} onClick={() => setActiveTab("cd")} count={recentCDs.length}>
                   <BookOpen size={12} /> CD
                 </TabBtn>
               </div>
               <Link
-                to={
-                  activeTab === "pd"
-                    ? "/creator/pd-history"
-                    : "/creator/cd-history"
-                }
+                to={activeTab === "pd" ? "/creator/pd-history" : "/creator/cd-history"}
                 className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl transition-colors"
               >
                 View All <ArrowRight size={13} />
@@ -841,80 +782,29 @@ const CreatorDashboard = () => {
           noPad
         >
           {activeTab === "pd" ? (
-            <PDRecentTable
-              docs={recentPDs}
-              onEdit={handlePDEdit}
-              onPreview={handlePDPreview}
-              onPrint={handlePDPrint}
-            />
+            <PDRecentTable docs={recentPDs} onEdit={handlePDEdit} onPreview={handlePDPreview} onPrint={handlePDPrint} />
           ) : (
-            <CDRecentTable
-              docs={recentCDs}
-              onEdit={handleCDEdit}
-              onPreview={handleCDPreview}
-              onPrint={handleCDPrint}
-            />
+            <CDRecentTable docs={recentCDs} onEdit={handleCDEdit} onPreview={handleCDPreview} onPrint={handleCDPrint} />
           )}
         </SectionCard>
 
         {/* ── Quick Action Cards ───────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
-            {
-              to: "/creator/create-pd",
-              icon: <GraduationCap size={22} className="text-blue-500" />,
-              bg: "bg-blue-50 group-hover:bg-blue-100",
-              hover: "hover:border-blue-200",
-              chevron: "group-hover:text-blue-400",
-              title: "Create Program Document",
-              subtitle: "Design program objectives, outcomes & structure",
-            },
-            {
-              to: "/creator/edit-cd",
-              icon: <BookOpen size={22} className="text-violet-500" />,
-              bg: "bg-violet-50 group-hover:bg-violet-100",
-              hover: "hover:border-violet-200",
-              chevron: "group-hover:text-violet-400",
-              title: "Create Course Document",
-              subtitle: "Define course outcomes, syllabus & assessments",
-            },
-            {
-              to: "/creator/pd-history",
-              icon: <Layers3 size={22} className="text-gray-500" />,
-              bg: "bg-gray-50 group-hover:bg-gray-100",
-              hover: "hover:border-gray-300",
-              chevron: "group-hover:text-gray-500",
-              title: "PD History",
-              subtitle: "Browse and manage all program document versions",
-            },
-            {
-              to: "/creator/cd-history",
-              icon: <BookMarked size={22} className="text-gray-500" />,
-              bg: "bg-gray-50 group-hover:bg-gray-100",
-              hover: "hover:border-gray-300",
-              chevron: "group-hover:text-gray-500",
-              title: "CD History",
-              subtitle: "Browse and manage all course document versions",
-            },
+            { to: "/creator/create-pd", icon: <GraduationCap size={22} className="text-blue-500" />, bg: "bg-blue-50 group-hover:bg-blue-100", hover: "hover:border-blue-200", chevron: "group-hover:text-blue-400", title: "Create Program Document", subtitle: "Design program objectives, outcomes & structure" },
+            { to: "/creator/edit-cd", icon: <BookOpen size={22} className="text-violet-500" />, bg: "bg-violet-50 group-hover:bg-violet-100", hover: "hover:border-violet-200", chevron: "group-hover:text-violet-400", title: "Create Course Document", subtitle: "Define course outcomes, syllabus & assessments" },
+            { to: "/creator/pd-history", icon: <Layers3 size={22} className="text-gray-500" />, bg: "bg-gray-50 group-hover:bg-gray-100", hover: "hover:border-gray-300", chevron: "group-hover:text-gray-500", title: "PD History", subtitle: "Browse and manage all program document versions" },
+            { to: "/creator/cd-history", icon: <BookMarked size={22} className="text-gray-500" />, bg: "bg-gray-50 group-hover:bg-gray-100", hover: "hover:border-gray-300", chevron: "group-hover:text-gray-500", title: "CD History", subtitle: "Browse and manage all course document versions" },
           ].map(({ to, icon, bg, hover, chevron, title, subtitle }) => (
-            <Link
-              key={to}
-              to={to}
-              className={`group flex items-center gap-4 p-5 bg-white border border-gray-100 rounded-2xl shadow-sm ${hover} hover:shadow-md transition-all duration-200`}
-            >
-              <div
-                className={`p-3 rounded-xl ${bg} transition-colors flex-shrink-0`}
-              >
+            <Link key={to} to={to} className={`group flex items-center gap-4 p-5 bg-white border border-gray-100 rounded-2xl shadow-sm ${hover} hover:shadow-md transition-all duration-200`}>
+              <div className={`p-3 rounded-xl ${bg} transition-colors flex-shrink-0`}>
                 {icon}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-gray-800 text-sm">{title}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
               </div>
-              <ChevronRight
-                size={16}
-                className={`text-gray-300 ${chevron} transition-colors flex-shrink-0`}
-              />
+              <ChevronRight size={16} className={`text-gray-300 ${chevron} transition-colors flex-shrink-0`} />
             </Link>
           ))}
         </div>
@@ -924,4 +814,3 @@ const CreatorDashboard = () => {
 };
 
 export default CreatorDashboard;
-33;

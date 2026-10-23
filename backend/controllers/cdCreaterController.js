@@ -603,7 +603,6 @@ export const getAssignedCDs = async (req, res) => {
         { "pd_data.semesters.categories.courses.assigneeId": creatorId },
         { "pd_data.section4.professionalElectives.courses.assigneeId": creatorId },
         { "pd_data.section4.openElectives.courses.assigneeId": creatorId },
-        // NEW: 2026 technical competency courses
         { "pd_data.section4.technicalCompetencyCourses.assigneeId": creatorId },
       ],
     }).populate("created_by", "name");
@@ -615,75 +614,71 @@ export const getAssignedCDs = async (req, res) => {
       const pCode = pd.program_id;
       const creatorName = pd.created_by?.name || "Admin";
 
-      pd.pd_data?.semesters?.forEach((sem) => {
-        sem.courses?.forEach((c) => {
-          if (isMine(c)) {
-            assignedCourses.push({
-              courseCode: c.code, courseTitle: c.title,
-              programName: pName, programCode: pCode,
-              type: c.type || "Theory", credits: c.credits,
-              context: `Semester ${sem.sem_no}`, pdCreatorName: creatorName,
-            });
-          }
-        });
-        sem.categories?.forEach((cat) => {
-          cat.courses?.forEach((c) => {
-            if (isMine(c)) {
-              assignedCourses.push({
-                courseCode: c.code, courseTitle: c.title,
-                programName: pName, programCode: pCode,
-                type: c.type || "Theory", credits: c.credits,
-                context: `Semester ${sem.sem_no} (${cat.categoryName})`,
-                pdCreatorName: creatorName,
-              });
-            }
+      const pushCourse = (c, context, type) => {
+        if (isMine(c)) {
+          assignedCourses.push({
+            courseCode: c.code, 
+            courseTitle: c.title,
+            programName: pName, 
+            programCode: pCode,
+            type: c.type || type || "Theory", 
+            credits: c.credits,
+            context: context, 
+            pdCreatorName: creatorName,
           });
+        }
+      };
+
+      pd.pd_data?.semesters?.forEach((sem) => {
+        sem.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no}`));
+        sem.categories?.forEach((cat) => {
+          cat.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no} (${cat.categoryName})`));
         });
       });
 
       pd.pd_data?.section4?.professionalElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) => {
-          if (isMine(c)) {
-            assignedCourses.push({
-              courseCode: c.code, courseTitle: c.title,
-              programName: pName, programCode: pCode,
-              type: "Professional Elective", credits: c.credits,
-              context: grp.title || `PE Group ${gi + 1}`,
-              pdCreatorName: creatorName,
-            });
-          }
-        });
+        grp.courses?.forEach((c) => pushCourse(c, grp.title || `PE Group ${gi + 1}`, "Professional Elective"));
       });
 
       pd.pd_data?.section4?.openElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) => {
-          if (isMine(c)) {
-            assignedCourses.push({
-              courseCode: c.code, courseTitle: c.title,
-              programName: pName, programCode: pCode,
-              type: "Open Elective", credits: c.credits,
-              context: grp.title || `OE Group ${gi + 1}`,
-              pdCreatorName: creatorName,
-            });
-          }
-        });
+        grp.courses?.forEach((c) => pushCourse(c, grp.title || `OE Group ${gi + 1}`, "Open Elective"));
       });
 
-      // NEW: 2026 Technical Competency Courses
       pd.pd_data?.section4?.technicalCompetencyCourses?.forEach((c) => {
-        if (isMine(c)) {
-          assignedCourses.push({
-            courseCode: c.code, courseTitle: c.title,
-            programName: pName, programCode: pCode,
-            type: "Technical Competency", credits: c.credits,
-            context: "Technical Competency Courses",
-            pdCreatorName: creatorName,
-          });
-        }
+        pushCourse(c, "Technical Competency Courses", "Technical Competency");
       });
     });
 
-    res.json({ success: true, assignedCourses });
+    // ── NEW: FETCH EXISTING CD STATUSES ──
+    // Extract all unique course codes from the assigned list
+    const courseCodes = assignedCourses.map(c => c.courseCode);
+    
+    // Find any existing CDs created by this user for these courses
+    const existingCDs = await CourseDocument.find({
+      courseCode: { $in: courseCodes },
+      createdBy: creatorId
+    }).sort({ createdAt: -1 }); // Sort latest first
+
+    // Create a map of the latest CD for each course code
+    const latestCDMap = new Map();
+    existingCDs.forEach(cd => {
+      if (!latestCDMap.has(cd.courseCode)) {
+        latestCDMap.set(cd.courseCode, cd);
+      }
+    });
+
+    // Enrich the assigned courses with their CD status
+    const enrichedCourses = assignedCourses.map(course => {
+      const existingCD = latestCDMap.get(course.courseCode);
+      return {
+        ...course,
+        cdId: existingCD ? existingCD._id : null,
+        cdStatus: existingCD ? existingCD.status : "Not Started",
+        cdVersion: existingCD ? existingCD.cdVersion : null,
+      };
+    });
+
+    res.json({ success: true, assignedCourses: enrichedCourses });
   } catch (error) {
     console.error("Error fetching assigned CDs:", error);
     res.status(500).json({ success: false, message: "Failed to fetch assigned courses." });
