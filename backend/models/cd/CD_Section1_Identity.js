@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 
-// ── Nested identity sub-document ─────────────────────────────────────────────
 const IdentitySubSchema = new mongoose.Schema(
   {
     courseCode: { type: String, default: "" },
@@ -21,7 +20,6 @@ const IdentitySubSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// ── Main schema ───────────────────────────────────────────────────────────────
 const Section1Schema = new mongoose.Schema(
   {
     courseCode: { type: String, required: true, index: true },
@@ -36,17 +34,8 @@ const Section1Schema = new mongoose.Schema(
       total: { type: Number, default: 0 },
     },
 
-    // ── Audit ─────────────────────────────────────────────────────────────────
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Creater",
-      required: true,
-    },
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Creater", required: true },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", default: null },
     isApproved: { type: Boolean, default: false },
   },
   { timestamps: true },

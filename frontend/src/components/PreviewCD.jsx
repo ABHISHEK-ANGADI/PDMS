@@ -1,24 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft,
-  Printer,
-  ZoomIn,
-  ZoomOut,
-  RefreshCw,
-  X,
-  List,
-  Search,
-  ChevronDown,
-  Download,
-  Maximize2,
-  Minimize2,
-  BookOpen,
-  Copy,
-  CheckCircle,
-  Keyboard,
-  FileText,
-  ChevronRight,
+  ArrowLeft, ZoomIn, ZoomOut, RefreshCw, X, List, Search,
+  ChevronDown, Download, Copy, CheckCircle, Keyboard, Code
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import parse from "html-react-parser";
@@ -29,18 +13,11 @@ import { toast } from "react-hot-toast";
 ───────────────────────────────────────────────────────────────────────────── */
 
 const field = (d, key) => d?.[key] || d?.identity?.[key] || "";
-
-const isEmpty = (html) =>
-  !html ||
-  !html.trim() ||
-  html.trim() === "<p><br></p>" ||
-  html.trim() === "<p></p>";
-
-const P = (html, fb = "<p class='cdp-empty'>Not provided.</p>") =>
-  parse(isEmpty(html) ? fb : html);
+const isEmpty = (html) => !html || !html.trim() || html.trim() === "<p><br></p>" || html.trim() === "<p></p>";
+const P = (html, fb = "<p class='cdp-empty'>Not provided.</p>") => parse(isEmpty(html) ? fb : html);
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   STYLES (Black & White Academic Theme)
+   STYLES (Print-Optimized Academic Theme)
 ───────────────────────────────────────────────────────────────────────────── */
 
 const STYLES = `
@@ -79,7 +56,6 @@ const STYLES = `
   .cdp-dropdown-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; cursor: pointer; border: none; background: none; width: 100%; text-align: left; color: #e2e8f0; transition: 0.15s; }
   .cdp-dropdown-item:hover { background: #1e293b; }
   .cdp-dropdown-item-label { font-size: 12px; font-weight: 600; font-family: var(--font-ui); }
-  .cdp-dropdown-item-sub { font-size: 10px; color: #64748b; font-family: var(--font-ui); }
 
   /* TOC Sidebar */
   .cdp-toc-panel { position: fixed; top: var(--bar-h); right: 0; bottom: 0; z-index: 9998; width: 280px; background: #0b1120; border-left: 1px solid #1e293b; overflow-y: auto; padding: 20px 0; transform: translateX(100%); transition: transform 0.3s ease; }
@@ -87,7 +63,6 @@ const STYLES = `
   .cdp-toc-title { font-size: 11px; font-weight: 700; color: #fff; text-transform: uppercase; padding: 0 20px 12px; border-bottom: 1px solid #1e293b; margin-bottom: 10px; font-family: var(--font-ui); display: flex; align-items: center; gap: 6px; }
   .cdp-toc-item { display: flex; align-items: center; gap: 8px; padding: 7px 20px; cursor: pointer; font-size: 12px; color: #94a3b8; transition: 0.15s; border: none; background: none; width: 100%; text-align: left; font-family: var(--font-ui); }
   .cdp-toc-item:hover { color: #fff; background: #1e293b; }
-  .cdp-toc-item.sub { padding-left: 36px; font-size: 11px; color: #64748b; }
   .cdp-toc-num { font-size: 10px; font-weight: 700; color: #fff; min-width: 24px; }
 
   /* Progress Bar */
@@ -97,87 +72,99 @@ const STYLES = `
   /* Scaler */
   .cdp-scaler { transform-origin: top center; transition: transform 0.15s ease; display: flex; justify-content: center; padding: 40px 20px; width: 100%; }
 
-  /* ── A4 BLACK & WHITE DOCUMENT ───────────────────────────────── */
+  /* ── A4 DOCUMENT MATCHING PDF ───────────────────────────────── */
   .cdp-doc {
     width: 210mm; min-height: 297mm; background: #fff;
     box-shadow: 0 0 0 1px rgba(0,0,0,0.1), 0 10px 40px rgba(0,0,0,0.3);
-    padding: 20mm 20mm 25mm 20mm; box-sizing: border-box;
-    font-family: var(--font-doc); font-size: 11pt; line-height: 1.6; color: #000;
+    padding: 15mm 15mm 20mm 15mm; box-sizing: border-box;
+    font-family: var(--font-doc); font-size: 8.5pt; line-height: 1.3; color: #000;
   }
 
   /* Cover Page */
   .cdp-cover { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 250mm; page-break-after: always; border: 3px double #000; padding: 20mm;}
-  .cdp-cover-uni { font-size: 26pt; font-weight: bold; color: #000; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px; }
-  .cdp-cover-type { font-size: 16pt; font-weight: bold; text-transform: uppercase; color: #000; margin-top: 20px; letter-spacing: 3px;}
-  .cdp-cover-course { font-size: 24pt; font-weight: bold; color: #000; text-transform: uppercase; margin: 40px 0 10px; padding: 20px 0; border-top: 1px solid #000; }
-  .cdp-cover-code { font-size: 18pt; font-weight: bold; color: #333; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #000;}
-  .cdp-cover-school { margin-top: auto; font-size: 12pt; font-weight: bold; color: #000; text-transform: uppercase; }
+  .cdp-cover-uni { font-size: 22pt; font-weight: bold; color: #000; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px; }
+  .cdp-cover-type { font-size: 14pt; font-weight: bold; text-transform: uppercase; color: #000; margin-top: 20px; letter-spacing: 3px;}
+  .cdp-cover-course { font-size: 20pt; font-weight: bold; color: #000; text-transform: uppercase; margin: 40px 0 10px; padding: 20px 0; border-top: 1px solid #000; }
+  .cdp-cover-code { font-size: 16pt; font-weight: bold; color: #333; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #000;}
+  .cdp-cover-school { margin-top: auto; font-size: 11pt; font-weight: bold; color: #000; text-transform: uppercase; }
 
   /* Typography & Sections */
-  .cdp-int-hdr { text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 25px; }
-  .cdp-int-hdr-prog { font-size: 16pt; font-weight: bold; text-transform: uppercase; color: #000; }
+  .cdp-int-hdr { text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px; }
+  .cdp-int-hdr-prog { font-size: 13pt; font-weight: bold; text-transform: uppercase; color: #000; }
+  .cdp-hdr-meta { font-size: 9pt; color: #555; margin-top: 6px; }
   
-  .cdp-sec-major { font-size: 12pt; font-weight: bold; background: #000; color: #fff; padding: 6px 12px; margin: 30px 0 15px; text-transform: uppercase; -webkit-print-color-adjust: exact; print-color-adjust: exact; page-break-after: avoid; }
-  .cdp-sec-minor { font-size: 11pt; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 4px; margin: 20px 0 10px; color: #000; page-break-after: avoid; }
-  .cdp-subsec { font-size: 10.5pt; font-weight: bold; margin: 15px 0 5px; color: #000; text-decoration: underline; page-break-after: avoid; }
+  .cdp-sec-major { font-size: 10pt; font-weight: bold; background: #000; color: #fff; padding: 4px 12px; margin: 20px 0 10px; text-transform: uppercase; -webkit-print-color-adjust: exact; print-color-adjust: exact; page-break-after: avoid; }
+  .cdp-sec-minor { font-size: 9.5pt; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 3px; margin: 15px 0 8px; color: #000; page-break-after: avoid; }
+  .cdp-subsec { font-size: 9pt; font-weight: bold; margin: 10px 0 4px; color: #000; page-break-after: avoid; }
 
-  /* Tables */
-  .cdp-doc table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10.5pt; table-layout: fixed; }
-  .cdp-doc th { background: #e0e0e0 !important; color: #000 !important; font-weight: bold; text-align: center; padding: 6px 10px; border: 1px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .cdp-doc td { border: 1px solid #000; padding: 6px 10px; vertical-align: top; color: #000; word-break: break-word;}
+  /* Base Table Styles */
+  .cdp-doc table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 8pt; table-layout: fixed; }
+  .cdp-doc th { background: #e0e0e0 !important; color: #000 !important; font-weight: bold; text-align: center; padding: 4px 3px; border: 1px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cdp-doc td { border: 1px solid #000; padding: 3px 5px; vertical-align: top; color: #000; word-break: break-word;}
   .cdp-doc tfoot td { background: #f5f5f5 !important; font-weight: bold; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
   /* Specific Tables */
   .cdp-t-id td:first-child { width: 35%; font-weight: bold; background: #f9f9f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .cdp-t-cr th, .cdp-t-cr td { text-align: center; }
-  .cdp-t-teach th:nth-child(1), .cdp-t-teach td:nth-child(1) { width: 8%; text-align: center; font-weight: bold;}
-  .cdp-t-teach th:nth-child(2), .cdp-t-teach td:nth-child(2) { width: 52%; }
-  .cdp-t-co td:first-child { width: 20%; font-weight: bold; text-align: center; background: #f9f9f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  /* Rich Text */
-  .cdp-rich p { margin: 0 0 8px 0; text-align: justify; }
-  .cdp-rich ul, .cdp-rich ol { margin: 4px 0 12px 0; padding-left: 24px; }
-  .cdp-rich li { margin-bottom: 6px; text-align: justify; }
+  /* Rich Text Formats */
+  .cdp-rich p { margin: 0 0 6px 0; text-align: justify; }
+  .cdp-rich ul, .cdp-rich ol { margin: 3px 0 10px 0; padding-left: 20px; }
+  .cdp-rich li { margin-bottom: 4px; text-align: justify; }
   .cdp-rich table th { background: #e0e0e0 !important; border: 1px solid #000 !important; }
   .cdp-rich table td { border: 1px solid #000 !important; }
 
   /* Helpers */
-  .cdp-tc { text-align: center !important; } .cdp-tj { text-align: justify !important; } .cdp-fb { font-weight: bold !important; }
-  .cdp-empty { color: #555; font-style: italic; font-size: 10pt; margin: 4px 0; }
-  .cdp-lead { font-size: 10.5pt; font-style: italic; color: #333; margin: 0 0 10px; }
+  .cdp-tc { text-align: center !important; } 
+  .cdp-tj { text-align: justify !important; } 
+  .cdp-fb { font-weight: bold !important; }
+  .cdp-empty { color: #555; font-style: italic; font-size: 8.5pt; margin: 4px 0; }
+  .cdp-lead { font-size: 9pt; font-style: italic; color: #333; margin: 0 0 6px; }
+  .cdp-note { font-size: 8pt; color: #555; margin-top: 4px; text-align: left; }
 
-  .cdp-sig { display: flex; justify-content: space-between; margin-top: 60px; }
-  .cdp-sig-box { width: 40%; text-align: center; border-top: 1px solid #000; padding-top: 8px; font-weight: bold; }
+  .cdp-sig { display: flex; justify-content: space-between; margin-top: 50px; }
+  .cdp-sig-box { width: 40%; text-align: center; border-top: 1px solid #000; padding-top: 8px; font-weight: bold; font-size: 9pt; }
+  .cdp-footer { font-size: 7.5pt; text-align: center; margin-top: 30px; color: #333; border-top: 1px solid #ccc; padding-top: 8px;}
 
   .page-break { page-break-after: always; }
 
-  /* ── Print Overrides ─────────────────────────────────────────── */
+  /* ── PRINT ENGINE ─────────────────────────────────────────────── */
   @media print {
-    body * { visibility: hidden !important; }
-    .print-area, .print-area * { visibility: visible !important; }
-    .print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
-    .no-print { display: none !important; }
-    .cdp-scaler { transform: none !important; padding: 0 !important; margin: 0 !important; }
-    .cdp-shell, .preview-overlay { background: transparent !important; padding: 0 !important; }
-    .cdp-doc { box-shadow: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; border: none !important; }
-    @page { size: A4 portrait; margin: 15mm; }
+    @page { size: A4 portrait; margin: 10mm; }
+    
+    /* Hide UI Elements Completely */
+    .no-print, .cdp-bar, .cdp-toc-panel, .cdp-progress, .cdp-shell, .preview-overlay { display: none !important; }
+    
+    /* Reset Wrapper */
+    body, html { margin: 0 !important; padding: 0 !important; background: #fff !important; width: 100% !important; height: auto !important; }
+    .print-area { display: block !important; position: static !important; width: 100% !important; padding: 0 !important; margin: 0 !important; }
+    .cdp-scaler { transform: none !important; padding: 0 !important; margin: 0 !important; display: block !important; }
+    
+    /* Force Document Format */
+    .cdp-doc { 
+      width: 100% !important; 
+      min-height: auto !important; 
+      box-shadow: none !important; 
+      padding: 0 !important; 
+      margin: 0 !important; 
+      border: none !important; 
+      font-size: 8.5pt !important;
+      line-height: 1.3 !important;
+    }
+    
+    /* Page Breaks */
+    .page-break { page-break-after: always !important; display: block !important; height: 0 !important; visibility: hidden !important; }
+    tr { page-break-inside: avoid !important; }
+    .cdp-sec-major, .cdp-sec-minor, .cdp-subsec { page-break-after: avoid !important; }
   }
 `;
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   SUB-COMPONENTS
+   SUB-COMPONENTS (Width-Controlled Tables)
 ───────────────────────────────────────────────────────────────────────────── */
 
-const SecMajor = ({ children, id }) => (
-  <div id={id} className="cdp-sec-major">
-    {children}
-  </div>
-);
-const SecMinor = ({ children, id }) => (
-  <div id={id} className="cdp-sec-minor">
-    {children}
-  </div>
-);
+const SecMajor = ({ children, id }) => <div id={id} className="cdp-sec-major">{children}</div>;
+const SecMinor = ({ children, id }) => <div id={id} className="cdp-sec-minor">{children}</div>;
 const Subsec = ({ children }) => <div className="cdp-subsec">{children}</div>;
 const Rich = ({ html }) => <div className="cdp-rich">{P(html)}</div>;
 const Empty = () => <p className="cdp-empty">—</p>;
@@ -186,18 +173,21 @@ const COBlock = ({ html, outcomes }) => {
   if (!isEmpty(html)) return <div className="cdp-rich">{parse(html)}</div>;
   if (!outcomes?.length) return <Empty />;
   return (
-    <table className="cdp-t-co">
-      <thead>
-        <tr>
-          <th>Course Outcome</th>
-          <th style={{ textAlign: "left" }}>Description</th>
-        </tr>
-      </thead>
+    <table style={{ tableLayout: "fixed" }}>
+      <colgroup>
+        <col style={{ width: "8%" }} />
+        <col style={{ width: "47%" }} />
+        <col style={{ width: "30%" }} />
+        <col style={{ width: "15%" }} />
+      </colgroup>
+      <thead><tr><th>COs</th><th>Course Outcomes</th><th>Real Life Application</th><th>Bloom's Level</th></tr></thead>
       <tbody>
         {outcomes.map((co, i) => (
           <tr key={i}>
-            <td>{co.code}</td>
-            <td className="cdp-tj">{parse(co.description || "")}</td>
+            <td className="cdp-fb cdp-tc">{co.code}</td>
+            <td className="cdp-tj">{co.description}</td>
+            <td className="cdp-tj">{co.application}</td>
+            <td className="cdp-tc">{co.bloom}</td>
           </tr>
         ))}
       </tbody>
@@ -209,28 +199,42 @@ const OMapBlock = ({ html, matrix }) => {
   if (!isEmpty(html)) return <div className="cdp-rich">{parse(html)}</div>;
   if (!matrix || matrix.length < 2) return <Empty />;
   return (
-    <table>
-      <thead>
-        <tr>
-          {matrix[0].map((h, i) => (
-            <th key={i} style={{ fontSize: "8.5pt" }}>
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
+    <table style={{ tableLayout: "fixed" }}>
+      <colgroup>
+        <col style={{ width: "8%" }} />
+        {matrix[0].slice(1).map((_, i) => <col key={i} style={{ width: "6.13%" }} />)}
+      </colgroup>
+      <thead><tr>{matrix[0].map((h, i) => <th key={i} style={{ fontSize: "7.5pt", padding: "3px 2px" }}>{h}</th>)}</tr></thead>
       <tbody>
         {matrix.slice(1).map((row, ri) => (
-          <tr key={ri}>
-            {row.map((cell, ci) => (
-              <td
-                key={ci}
-                className={ci === 0 ? "cdp-fb cdp-tc" : "cdp-tc"}
-                style={{ fontSize: "8.5pt" }}
-              >
-                {cell}
-              </td>
-            ))}
+          <tr key={ri}>{row.map((cell, ci) => <td key={ci} className={ci === 0 ? "cdp-fb cdp-tc" : "cdp-tc"} style={{ fontSize: "7.5pt", padding: "3px 2px" }}>{cell}</td>)}</tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
+
+const AttainmentTargetsBlock = ({ html, targets }) => {
+  if (!isEmpty(html)) return <div className="cdp-rich">{parse(html)}</div>;
+  if (!targets?.length) return <Empty />;
+  return (
+    <table style={{ tableLayout: "fixed" }}>
+      <colgroup>
+        <col style={{ width: "8%" }} />
+        <col style={{ width: "77%" }} /> {/* Widened Target Column */}
+        <col style={{ width: "15%" }} />
+      </colgroup>
+      <thead><tr><th>COs</th><th>Attainment Target</th><th>Attained</th></tr></thead>
+      <tbody>
+        {targets.map((t, i) => (
+          <tr key={i}>
+            <td className="cdp-fb cdp-tc">{t.co}</td>
+            <td className="cdp-tj">
+              {t.aText}<br />
+              {t.bPlusText}<br />
+              {t.bText}
+            </td>
+            <td className="cdp-tc">{t.aAttained}</td>
           </tr>
         ))}
       </tbody>
@@ -238,94 +242,159 @@ const OMapBlock = ({ html, matrix }) => {
   );
 };
 
-const AWBlock = ({ html, data }) => {
+const PerformanceBlock = ({ html, data }) => {
   if (!isEmpty(html)) return <div className="cdp-rich">{parse(html)}</div>;
-  if (!data?.length) return <Empty />;
-  const sum = (k) => data.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  if (!data || !data.totalStudents) return <Empty />;
+  const g = data.gradeDistribution || {};
   return (
-    <table>
+    <table style={{ fontSize: "7.5pt", tableLayout: "fixed" }}>
+      <colgroup>
+        <col style={{ width: "6%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "6%" }} />
+        <col style={{ width: "6%" }} />
+        <col style={{ width: "6%" }} />
+        <col style={{ width: "6%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "7%" }} />
+        <col style={{ width: "6%" }} />
+      </colgroup>
       <thead>
         <tr>
-          <th rowSpan={2} style={{ width: "9%", verticalAlign: "middle" }}>
-            COs
-            <br />
-            Wt.
-          </th>
-          <th colSpan={3} style={{ width: "21%" }}>
-            Quiz = 15 Marks
-          </th>
-          <th colSpan={3} style={{ width: "21%" }}>
-            Test = 25 Marks
-          </th>
-          <th colSpan={2} style={{ width: "16%" }}>
-            Assignment = 20
-          </th>
-          <th rowSpan={2} style={{ width: "9%", verticalAlign: "middle" }}>
-            CIE
-            <br />
-            =60
-          </th>
-          <th rowSpan={2} style={{ width: "9%", verticalAlign: "middle" }}>
-            SEE
-            <br />
-            =40
-          </th>
+          <th rowSpan={2} style={{ padding: "3px 2px" }}>Acad<br/>Year</th>
+          <th rowSpan={2} style={{ padding: "3px 2px" }}>Prog<br/>ram</th>
+          <th rowSpan={2} style={{ padding: "3px 2px" }}>Sem<br/>ester</th>
+          <th rowSpan={2} style={{ padding: "3px 2px" }}>Sect<br/>ion</th>
+          <th rowSpan={2} style={{ padding: "3px 2px" }}>Cour<br/>se<br/>Code</th>
+          <th colSpan={9} style={{ padding: "3px 2px" }}>Course Title</th>
         </tr>
         <tr>
-          {[
-            "Q1\n=5",
-            "Q2\n=4",
-            "Q3\n=6",
-            "T1\n=7",
-            "T2\n=8",
-            "T3\n=10",
-            "A1\n=10",
-            "A2\n=10",
-          ].map((l) => (
-            <th key={l} style={{ fontSize: "8pt", whiteSpace: "pre-line" }}>
-              {l}
-            </th>
-          ))}
+          <th colSpan={9} style={{ padding: "3px 2px", textAlign: "center" }}>Course Tutor/s: <br/>Tutor's ID/Department:</th>
+        </tr>
+        <tr>
+          <th style={{ padding: "3px 2px" }}>Total<br/>Students</th>
+          <th style={{ padding: "3px 2px" }}>Appea<br/>red</th>
+          <th style={{ padding: "3px 2px" }}>Pass<br/>ed</th>
+          <th style={{ padding: "3px 2px" }}>Class<br/>Avg</th>
+          <th style={{ padding: "3px 2px" }}>O-<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>A+<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>A<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>B+<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>B<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>C<br/>Grade</th>
+          <th style={{ padding: "3px 2px" }}>D<br/>Grade</th>
         </tr>
       </thead>
       <tbody>
-        {data.map((row, i) => (
-          <tr key={i}>
-            <td className="cdp-fb cdp-tc">{row.co}</td>
-            {["q1", "q2", "q3", "t1", "t2", "t3", "a1", "a2"].map((k) => (
-              <td key={k} className="cdp-tc">
-                {row[k] || ""}
-              </td>
-            ))}
-            <td className="cdp-tc cdp-fb">{row.cie || ""}</td>
-            <td className="cdp-tc cdp-fb">{row.see || ""}</td>
+        <tr>
+          <td className="cdp-tc">{data.totalStudents}</td>
+          <td className="cdp-tc">{data.appearedStudents}</td>
+          <td className="cdp-tc">{data.passedStudents}</td>
+          <td className="cdp-tc">{data.classAverage}</td>
+          <td className="cdp-tc">{g.O || 0}</td>
+          <td className="cdp-tc">{g.Aplus || 0}</td>
+          <td className="cdp-tc">{g.A || 0}</td>
+          <td className="cdp-tc">{g.Bplus || 0}</td>
+          <td className="cdp-tc">{g.B || 0}</td>
+          <td className="cdp-tc">{g.C || 0}</td>
+          <td className="cdp-tc">{g.D || 0}</td>
+        </tr>
+        {[1,2,3,4,5,6].map(co => (
+          <tr key={co}>
+            <td colSpan={14} className="cdp-fb" style={{ padding: "4px 6px" }}>CO{co}- Performance</td>
           </tr>
         ))}
-      </tbody>
-      <tfoot>
         <tr>
-          <td />
-          {["q1", "q2", "q3", "t1", "t2", "t3", "a1", "a2", "cie", "see"].map(
-            (k) => (
-              <td key={k}>{sum(k) || ""}</td>
-            ),
-          )}
+          <td colSpan={3} className="cdp-tc">Documents</td>
+          <td colSpan={5} className="cdp-tc" style={{ fontSize: "7pt" }}>
+            Quiz-1 Paper<br/>Assignment-1 paper<br/>Term-1 paper<br/>Students Feedback
+          </td>
+          <td colSpan={6} className="cdp-tc" style={{ fontSize: "7pt" }}>
+            Quiz-2 Paper<br/>Assignment-2 paper<br/>PBL paper<br/>Term-2 paper<br/>Students Feedback
+          </td>
         </tr>
-      </tfoot>
+      </tbody>
     </table>
   );
 };
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   MAIN COMPONENT
-───────────────────────────────────────────────────────────────────────────── */
+const CABBlock = ({ html, targets }) => {
+  if (!isEmpty(html)) return <div className="cdp-rich">{parse(html)}</div>;
+  if (!targets?.length) return <Empty />;
+  return (
+    <table style={{ tableLayout: "fixed" }}>
+      <colgroup>
+        <col style={{ width: "8%" }} />
+        <col style={{ width: "65%" }} /> {/* Widened Outcomes Column */}
+        <col style={{ width: "15%" }} />
+        <col style={{ width: "12%" }} />
+      </colgroup>
+      <thead><tr><th colSpan={4}>Attainment of Course Outcomes-COs</th></tr><tr><th>COs</th><th>Outcomes</th><th>Targeted Attainment Value</th><th>Attained Value</th></tr></thead>
+      <tbody>
+        {targets.map((t, i) => (
+          <tr key={i}>
+            <td className="cdp-tc">{t.co}</td>
+            <td>
+              {t.aText}<br />
+              {t.bPlusText}<br />
+              {t.bText}
+            </td>
+            <td className="cdp-tc">
+              {t.aTarget}<br />
+              {t.bPlusTarget}<br />
+              {t.bTarget}
+            </td>
+            <td className="cdp-tc">
+              {t.aAttained}<br />
+              {t.bPlusAttained}<br />
+              {t.bAttained}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
 
-const PreviewCD = ({
-  isModal = false,
-  onClose,
-  passedCdData,
-  passedMetaData,
-}) => {
+const StaticGradeDistributionChart = () => (
+  <div style={{ border: "1px solid #000", padding: "10px", margin: "10px 0", textAlign: "center" }}>
+    <div style={{ fontWeight: "bold", fontSize: "9pt", marginBottom: "5px" }}>Distribution of Grades</div>
+    <div style={{ fontSize: "7.5pt", color: "#555", marginBottom: "10px" }}>Y-axis: Number of Students · X-axis: Grades Scored</div>
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "10px", height: "120px", paddingBottom: "5px", borderBottom: "1px solid #000" }}>
+      {[{ label: "D", count: 4, max: 16 },{ label: "C", count: 8, max: 16 },{ label: "B", count: 10, max: 16 },{ label: "B+", count: 14, max: 16 },{ label: "A", count: 10, max: 16 },{ label: "A+", count: 8, max: 16 },{ label: "O", count: 4, max: 16 }].map((item) => (
+        <div key={item.label} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", width: "24px", height: "100%" }}>
+          <span style={{ fontSize: "7.5pt", fontWeight: "bold", marginBottom: "2px" }}>{item.label}</span>
+          <div style={{ width: "100%", height: `${(item.count / item.max) * 100}%`, backgroundColor: "#f97316" }} />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const StaticCOAttainmentChart = () => (
+  <div style={{ border: "1px solid #000", padding: "10px", margin: "10px 0", textAlign: "center" }}>
+    <div style={{ fontWeight: "bold", fontSize: "9pt", marginBottom: "5px" }}>CO-1 Distribution: 75% students above 70%</div>
+    <div style={{ fontSize: "7.5pt", color: "#555", marginBottom: "10px" }}>Target vs Attained per band — structural template</div>
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "6px", height: "120px", paddingBottom: "5px", borderBottom: "1px solid #000" }}>
+      {[{ label: "1", height: 0 },{ label: "2", height: 0 },{ label: "3", height: 40 },{ label: "4", height: 60 },{ label: "5", height: 80 },{ label: "6", height: 80 },{ label: "7", height: 24 }].map((item) => (
+        <div key={item.label} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", width: "18px", height: "100%" }}>
+          <div style={{ width: "100%", height: `${item.height}%`, backgroundColor: "#2563eb" }} />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PreviewCD = ({ isModal = false, onClose, passedCdData, passedMetaData }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
@@ -336,11 +405,8 @@ const PreviewCD = ({
 
   const [cdId, setCdId] = useState(params.id || location.state?.cdId || null);
   const [data, setData] = useState(
-    passedCdData && passedMetaData
-      ? { cdData: passedCdData, metaData: passedMetaData }
-      : location.state?.cdData
-        ? { cdData: location.state.cdData, metaData: location.state.metaData }
-        : null,
+    passedCdData && passedMetaData ? { cdData: passedCdData, metaData: passedMetaData } :
+    location.state?.cdData ? { cdData: location.state.cdData, metaData: location.state.metaData } : null
   );
 
   const [loading, setLoading] = useState(!data && !!params.id && !isModal);
@@ -350,7 +416,6 @@ const PreviewCD = ({
   const [searchQ, setSearchQ] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [copied, setCopied] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
 
   useEffect(() => {
@@ -363,9 +428,7 @@ const PreviewCD = ({
   useEffect(() => {
     if (isModal) {
       document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = "auto";
-      };
+      return () => { document.body.style.overflow = "auto"; };
     }
   }, [isModal]);
 
@@ -373,22 +436,12 @@ const PreviewCD = ({
     if (isModal || data || !params.id) return;
     const load = async () => {
       try {
-        const res = await axios.get(`/api/creater/cd/fetch/${params.id}`, {
-          headers: { createrToken },
-        });
+        const res = await axios.get(`/api/creater/cd/fetch/${params.id}`, { headers: { createrToken } });
         if (res.data.success) {
           const cd = res.data.cd;
           setCdId(params.id);
           setData({
-            metaData: {
-              courseId: params.id,
-              courseCode: cd.courseCode,
-              courseTitle: cd.courseTitle,
-              programName: cd.programTitle || cd.programName,
-              versionNo: cd.cdVersion,
-              status: cd.status,
-              isNew: false,
-            },
+            metaData: { courseId: params.id, courseCode: cd.courseCode, courseTitle: cd.courseTitle, programName: cd.programTitle || cd.programName, versionNo: cd.cdVersion, status: cd.status, isNew: false },
             cdData: cd,
           });
         } else {
@@ -415,56 +468,26 @@ const PreviewCD = ({
   useEffect(() => {
     const el = shellRef.current;
     if (!el) return;
-    const handler = () => {
-      setProgress(
-        el.scrollHeight > el.clientHeight
-          ? (el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100
-          : 0,
-      );
-    };
+    const handler = () => setProgress(el.scrollHeight > el.clientHeight ? (el.scrollTop / (el.scrollHeight - el.clientHeight)) * 100 : 0);
     el.addEventListener("scroll", handler);
     return () => el.removeEventListener("scroll", handler);
   }, []);
 
-  /* Keyboard Shortcuts */
   useEffect(() => {
     const handler = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "p") {
-        e.preventDefault();
-        handlePrint();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-        e.preventDefault();
-        setSearchOpen((s) => !s);
-      }
-      if (e.key === "=" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        zIn();
-      }
-      if (e.key === "-" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        zOut();
-      }
-      if (e.key === "0" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        zReset();
-      }
-      if (e.key === "Escape") {
-        setDdOpen(false);
-        setTocOpen(false);
-        setSearchOpen(false);
-        setShortcuts(false);
-      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "p") { e.preventDefault(); window.print(); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "f") { e.preventDefault(); setSearchOpen((s) => !s); }
+      if (e.key === "=" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zIn(); }
+      if (e.key === "-" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zOut(); }
+      if (e.key === "0" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zReset(); }
+      if (e.key === "Escape") { setDdOpen(false); setTocOpen(false); setSearchOpen(false); setShortcuts(false); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
   const handleBack = useCallback(() => {
-    if (isModal && onClose) {
-      onClose();
-      return;
-    }
+    if (isModal && onClose) { onClose(); return; }
     const id = cdId || location.state?.cdId;
     if (id) navigate("/creator/edit-cd", { state: { loadId: id } });
     else navigate(-1);
@@ -474,96 +497,66 @@ const PreviewCD = ({
   const zOut = () => setZoom((z) => Math.max(z - 0.1, 0.4));
   const zReset = () => setZoom(1.0);
 
-  const handleSearch = (e) => {
-    if (e.key === "Enter" && searchQ) {
-      window.find(searchQ, false, false, true, false, true, false);
-    }
-  };
-
-  const scrollTo = (id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      setTocOpen(false);
-    }
-  };
+  const handleSearch = (e) => { if (e.key === "Enter" && searchQ) window.find(searchQ, false, false, true, false, true, false); };
+  const scrollTo = (id) => { const el = document.getElementById(id); if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); setTocOpen(false); } };
 
   const generateFilename = useCallback(() => {
-    if (!data) return "Course_Document.pdf";
+    if (!data) return "Course_Document";
     const { cdData: d, metaData: m } = data;
     const code = field(d, "courseCode") || "CD";
-    const title = (field(d, "courseTitle") || "Course")
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "_")
-      .trim();
-    const ver = (m.versionNo || "1_0_0").replace(/\./g, "_");
-    const date = new Date().toISOString().slice(0, 10);
-    return `CD_${code}_${title}_v${ver}_${date}.pdf`;
+    const title = (field(d, "courseTitle") || "Course").replace(/[^\w\s-]/g, "").replace(/\s+/g, "_").trim();
+    return `CD_${code}_${title}_v${(m.versionNo || "1.0.0").replace(/\./g, "_")}_${new Date().toISOString().slice(0, 10)}`;
   }, [data]);
 
-  const handlePrint = useCallback(() => {
-    window.print();
-    setDdOpen(false);
-  }, []);
+  const handleDownloadHTML = useCallback(() => {
+    if (!docRef.current) return;
+    
+    // Extract only the needed A4 styles for standalone export
+    const a4Styles = STYLES.replace(/:root \{[^}]+\}/, "")
+                           .replace(/\.cdp-shell[^}]+\}/g, "")
+                           .replace(/\.preview-overlay[^}]+\}/g, "")
+                           .replace(/\.cdp-bar[^}]+\}/g, "")
+                           .replace(/\.cdp-toc-panel[^}]+\}/g, "")
+                           .replace(/\.cdp-progress[^}]+\}/g, "")
+                           .replace(/\.no-print[^}]+\}/g, "")
+                           .replace(/@media print \{[\s\S]*?\}\s*\}/g, "")
+                           .replace(/\.cdp-scaler \{[^}]+\}/g, "");
 
-  const handleDownloadPDF = useCallback(() => {
-    const filename = generateFilename();
-    document.title = filename;
-    toast.success("Ready! Select 'Save as PDF' in the destination dropdown.", {
-      duration: 4000,
-    });
-    setTimeout(() => {
-      window.print();
-      document.title = "CDMS Creator";
-    }, 500);
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${generateFilename()}</title>
+        <style>
+          /* Standalone Page Wrapper */
+          body { background: #d1d5db; display: flex; justify-content: center; padding: 20px; margin: 0; }
+          
+          /* Document Styles */
+          ${a4Styles}
+        </style>
+      </head>
+      <body>
+        <div class="cdp-doc">
+          ${docRef.current.innerHTML}
+        </div>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = generateFilename() + ".html";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     setDdOpen(false);
   }, [generateFilename]);
 
-  const handleCopyFilename = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(generateFilename());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-      toast.success("Filename copied!");
-    } catch {
-      toast.error("Could not copy");
-    }
-    setDdOpen(false);
-  }, [generateFilename]);
-
-  if (loading)
-    return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
-          background: "#0f172a",
-        }}
-      >
-        <RefreshCw
-          style={{ animation: "spin 1s linear infinite", color: "#fff" }}
-          size={40}
-        />
-      </div>
-    );
-  if (!data)
-    return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
-          background: "#0f172a",
-          color: "#f87171",
-          fontWeight: "bold",
-        }}
-      >
-        No document data available.
-      </div>
-    );
+  if (loading) return <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: "#0f172a" }}><RefreshCw style={{ animation: "spin 1s linear infinite", color: "#fff" }} size={40} /></div>;
+  if (!data) return <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: "#0f172a", color: "#f87171", fontWeight: "bold" }}>No document data available.</div>;
 
   const { cdData: d, metaData: m } = data;
   const f = (key) => field(d, key);
@@ -573,464 +566,190 @@ const PreviewCD = ({
     { id: "sec-1", num: "1", label: "Course Identity" },
     { id: "sec-2", num: "2", label: "Course Details" },
     { id: "sec-3", num: "3", label: "Teaching & Assessment" },
-    { id: "sec-4", num: "4", label: "Other Details" },
+    { id: "sec-4", num: "4", label: "Attainment & Other" },
   ];
 
   return (
     <div ref={shellRef} className={isModal ? "preview-overlay" : "cdp-shell"}>
       <style>{STYLES}</style>
-      <div className="pd-progress no-print">
-        <div className="pd-progress-bar" style={{ width: `${progress}%` }} />
-      </div>
+      <div className="cdp-progress no-print"><div className="cdp-progress-bar" style={{ width: `${progress}%` }} /></div>
 
-      {/* ── TOOLBAR ─────────────────────────────────────────────────── */}
+      {/* TOOLBAR */}
       <div className="cdp-bar no-print">
         <div className="cdp-bar-l">
-          <button className="cdp-btn" onClick={handleBack}>
-            {isModal ? <X size={14} /> : <ArrowLeft size={14} />}{" "}
-            {isModal ? "Close" : "Back"}
-          </button>
-
-          {searchOpen && (
-            <div className="cdp-search-wrap">
-              <Search size={12} style={{ color: "#64748b" }} />
-              <input
-                autoFocus
-                value={searchQ}
-                onChange={(e) => setSearchQ(e.target.value)}
-                onKeyDown={handleSearch}
-                placeholder="Search (Press Enter)…"
-              />
-            </div>
-          )}
-          <button
-            className={`cdp-btn ${searchOpen ? "active" : ""}`}
-            onClick={() => setSearchOpen((o) => !o)}
-            title="Search (Ctrl+F)"
-          >
-            <Search size={14} />
-          </button>
-          <button
-            className={`cdp-btn ${tocOpen ? "active" : ""}`}
-            onClick={() => setTocOpen((o) => !o)}
-          >
-            <List size={14} /> TOC
-          </button>
+          <button className="cdp-btn" onClick={handleBack}>{isModal ? <X size={14} /> : <ArrowLeft size={14} />}{isModal ? "Close" : "Back"}</button>
+          {searchOpen && <div className="cdp-search-wrap"><Search size={12} style={{ color: "#64748b" }} /><input autoFocus value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={handleSearch} placeholder="Search (Enter)…" /></div>}
+          <button className={`cdp-btn ${searchOpen ? "active" : ""}`} onClick={() => setSearchOpen((o) => !o)} title="Search"><Search size={14} /></button>
+          <button className={`cdp-btn ${tocOpen ? "active" : ""}`} onClick={() => setTocOpen((o) => !o)}><List size={14} /> TOC</button>
         </div>
-
         <div className="cdp-bar-c">
-          <div
-            className="cdp-search-wrap"
-            style={{
-              background: "none",
-              border: "none",
-              fontSize: "12px",
-              color: "#94a3b8",
-            }}
-          >
-            {Math.round(zoom * 100)}%
-          </div>
-          <button className="cdp-btn" onClick={zOut}>
-            <ZoomOut size={14} />
-          </button>
-          <button className="cdp-btn" onClick={zIn}>
-            <ZoomIn size={14} />
-          </button>
+          <div className="cdp-search-wrap" style={{ background: "none", border: "none", fontSize: "12px", color: "#94a3b8" }}>{Math.round(zoom * 100)}%</div>
+          <button className="cdp-btn" onClick={zOut}><ZoomOut size={14} /></button>
+          <button className="cdp-btn" onClick={zIn}><ZoomIn size={14} /></button>
         </div>
-
         <div className="cdp-bar-r">
-          <button
-            className="cdp-btn"
-            onClick={() => setShortcuts((s) => !s)}
-            title="Keyboard shortcuts"
-          >
-            <Keyboard size={14} />
-          </button>
+          <button className="cdp-btn" onClick={() => setShortcuts((s) => !s)}><Keyboard size={14} /></button>
           <div className="cdp-dropdown-wrap">
-            <button className="cdp-action" onClick={() => setDdOpen((o) => !o)}>
-              <Download size={14} /> Export <ChevronDown size={11} />
-            </button>
+            <button className="cdp-action" onClick={() => setDdOpen((o) => !o)}><Download size={14} /> Export <ChevronDown size={11} /></button>
             {ddOpen && (
               <div className="cdp-dropdown">
-                <div className="pd-dropdown-header">Export Options</div>
-                <button
-                  className="cdp-dropdown-item"
-                  onClick={handleDownloadPDF}
-                >
-                  <Printer size={15} />
-                  <div>
-                    <div className="pd-dropdown-item-label">Save as PDF</div>
-                    <div className="pd-dropdown-item-sub">
-                      Opens print dialog
-                    </div>
-                  </div>
-                </button>
-                <button
-                  className="cdp-dropdown-item"
-                  onClick={handleCopyFilename}
-                >
-                  {copied ? (
-                    <CheckCircle size={15} style={{ color: "#4ade80" }} />
-                  ) : (
-                    <Copy size={15} />
-                  )}
-                  <div>
-                    <div className="pd-dropdown-item-label">
-                      {copied ? "Copied!" : "Copy Filename"}
-                    </div>
-                    <div className="pd-dropdown-item-sub">
-                      Paste when saving
-                    </div>
-                  </div>
-                </button>
+                <button className="cdp-dropdown-item" onClick={handleDownloadHTML}><Code size={15} /><div><div className="cdp-dropdown-item-label">Download HTML</div><div className="cdp-dropdown-item-sub">A4 Formatted .html file</div></div></button>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* ── PANELS ─────────────────────────────────────────────────── */}
+      {/* TOC SIDEBAR */}
       <div className={`cdp-toc-panel no-print ${tocOpen ? "open" : ""}`}>
-        <div className="cdp-toc-title">
-          <List size={12} /> Table of Contents
-        </div>
-        {TOC_SECTIONS.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => scrollTo(s.id)}
-            className={`cdp-toc-item ${s.sub ? "sub" : ""}`}
-          >
-            <span className="cdp-toc-num">{s.num}</span>
-            {s.label}
-          </button>
-        ))}
+        <div className="cdp-toc-title"><List size={12} /> Table of Contents</div>
+        {TOC_SECTIONS.map((s, i) => <button key={i} onClick={() => scrollTo(s.id)} className="cdp-toc-item"><span className="cdp-toc-num">{s.num}</span>{s.label}</button>)}
       </div>
 
-      {shortcuts && (
-        <div
-          className="no-print"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.75)",
-            zIndex: 20000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-          onClick={() => setShortcuts(false)}
-        >
-          <div
-            style={{
-              background: "#0d1220",
-              border: "1px solid #334155",
-              borderRadius: 12,
-              padding: "28px 32px",
-              minWidth: 320,
-              color: "#e2e8f0",
-              fontFamily: "var(--font-ui)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: "#fff",
-                textTransform: "uppercase",
-                marginBottom: 18,
-              }}
-            >
-              Keyboard Shortcuts
-            </div>
-            {[
-              ["Ctrl + P", "Print / Save as PDF"],
-              ["Ctrl + F", "Toggle Search"],
-              ["Ctrl + =", "Zoom in"],
-              ["Ctrl + -", "Zoom out"],
-              ["Ctrl + 0", "Reset zoom"],
-              ["Esc", "Close panels"],
-            ].map(([k, v]) => (
-              <div
-                key={k}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "6px 0",
-                  borderBottom: "1px solid #1e293b",
-                }}
-              >
-                <span style={{ color: "#94a3b8", fontSize: 12 }}>{v}</span>
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 700,
-                    background: "#1e293b",
-                    padding: "2px 6px",
-                    borderRadius: 4,
-                  }}
-                >
-                  {k}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── PRINT AREA ──────────────────────────────────────────────── */}
+      {/* PRINT AREA */}
       <div className="print-area">
-        <div
-          className="cdp-scaler"
-          style={{
-            transform: `scale(${zoom})`,
-            marginTop: isModal ? "20px" : "0",
-          }}
-        >
+        <div className="cdp-scaler" style={{ transform: `scale(${zoom})`, marginTop: isModal ? "20px" : "0" }}>
           <div ref={docRef} className="cdp-doc">
-            {/* ── COVER ─────────────────────────────────────────── */}
+            
+            {/* COVER */}
             <div id="cover" className="cdp-cover">
-              <div className="cdp-cover-uni">
-                {f("schoolTitle") || "UNIVERSITY NAME"}
-              </div>
+              <div className="cdp-cover-uni">{f("schoolTitle") || "UNIVERSITY NAME"}</div>
               <div className="cdp-cover-type">Course Document</div>
-              <div className="cdp-cover-course">
-                {f("courseTitle") || "COURSE TITLE"}
-              </div>
-              <div className="cdp-cover-code">
-                {f("courseCode") || "COURSE CODE"}
-              </div>
-              <div className="cdp-cover-school">
-                {f("department")}
-                <br />
-                {f("facultyTitle")}
-              </div>
+              <div className="cdp-cover-course">{f("courseTitle") || "COURSE TITLE"}</div>
+              <div className="cdp-cover-code">{f("courseCode") || "COURSE CODE"}</div>
+              <div className="cdp-cover-school">{f("department")}<br />{f("facultyTitle")}</div>
             </div>
 
             <div className="cdp-int-hdr">
               <div className="cdp-int-hdr-prog">{f("courseTitle")}</div>
-              <div className="cdp-hdr-meta">
-                Version: {m.versionNo || "1.0.0"} · Code: {f("courseCode")}
-              </div>
+              <div className="cdp-hdr-meta">Version: {m.versionNo || "1.0.0"} · Code: {f("courseCode")}</div>
             </div>
 
-            {/* ── 1. IDENTITY ────────────────────────────────────── */}
+            {/* 1. IDENTITY */}
             <SecMajor id="sec-1">1. Course Identity</SecMajor>
             <table className="cdp-t-id">
               <tbody>
                 {[
-                  ["Course Code", f("courseCode")],
-                  ["Course Title", f("courseTitle")],
-                  ["Program Code", f("programCode")],
-                  ["Program Title", f("programTitle")],
-                  ["School Code", f("schoolCode")],
-                  ["School Title", f("schoolTitle")],
-                  ["Department Code", f("departmentCode")],
-                  ["Department", f("department")],
-                  ["Faculty Code", f("facultyCode")],
-                  ["Faculty Title", f("facultyTitle")],
-                  ["Department Offering the Course", f("offeringDepartment")],
-                  ["Faculty Member", f("facultyMember")],
+                  ["Course Code", f("courseCode")], ["Course Title", f("courseTitle")],
+                  ["Program Code", f("programCode")], ["Program Title", f("programTitle")],
+                  ["School Code", f("schoolCode")], ["School Title", f("schoolTitle")],
+                  ["Department Code", f("departmentCode")], ["Department", f("department")],
+                  ["Faculty Code", f("facultyCode")], ["Faculty Title", f("facultyTitle")],
+                  ["Department Offering the Course", f("offeringDepartment")], ["Faculty Member", f("facultyMember")],
                   ["Semester Duration", f("semesterDuration")],
-                ].map(([lbl, val]) => (
-                  <tr key={lbl}>
-                    <td>{lbl}</td>
-                    <td>{val || <span className="cdp-empty">—</span>}</td>
-                  </tr>
-                ))}
+                ].map(([lbl, val]) => <tr key={lbl}><td>{lbl}</td><td>{val || <span className="cdp-empty">—</span>}</td></tr>)}
               </tbody>
             </table>
 
             <SecMinor>1.1 Course Size</SecMinor>
-            <table className="cdp-t-cr" style={{ width: "60%" }}>
-              <thead>
-                <tr>
-                  <th>Total Credits</th>
-                  <th>L — Lecture</th>
-                  <th>T — Tutorial</th>
-                  <th>P — Practical</th>
-                  <th>Total Hours</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="cdp-fb">{d.credits?.total ?? 0}</td>
-                  <td>{d.credits?.L ?? 0}</td>
-                  <td>{d.credits?.T ?? 0}</td>
-                  <td>{d.credits?.P ?? 0}</td>
-                  <td className="cdp-fb">{d.totalHours ?? 0}</td>
-                </tr>
-              </tbody>
+            <table className="cdp-t-cr" style={{ width: "60%", tableLayout: "fixed" }}>
+              <thead><tr><th>Total Credits</th><th>L — Lecture</th><th>T — Tutorial</th><th>P — Practical</th><th>Total Hours</th></tr></thead>
+              <tbody><tr><td className="cdp-fb">{d.credits?.total ?? 0}</td><td>{d.credits?.L ?? 0}</td><td>{d.credits?.T ?? 0}</td><td>{d.credits?.P ?? 0}</td><td className="cdp-fb">{d.totalHours ?? 0}</td></tr></tbody>
             </table>
 
-            {/* ── 2. DETAILS ─────────────────────────────────────── */}
+            {/* 2. DETAILS */}
             <SecMajor id="sec-2">2. Course Details</SecMajor>
-
             <SecMinor>2.1 Course Aims and Summary</SecMinor>
             <Rich html={d.aimsSummary} />
-
             <SecMinor>2.2 Course Objectives</SecMinor>
             <Rich html={d.objectives} />
-
             <SecMinor>2.3 Course Outcomes (COs)</SecMinor>
-            <p className="cdp-lead">
-              After undergoing this course, students will be able to:
-            </p>
+            <p className="cdp-lead">After undergoing this course, students will be able to:</p>
             <COBlock html={d.courseOutcomesHtml} outcomes={d.courseOutcomes} />
-
             <Subsec>Outcome Map (CO → PO / PSO)</Subsec>
             <OMapBlock html={d.outcomeMapHtml} matrix={d.outcomeMap?.matrix} />
-            <p className="cdp-note">
-              Relevance: 1 = High &nbsp;|&nbsp; 2 = Medium &nbsp;|&nbsp; 3 = Low
-            </p>
-
+            <p className="cdp-note">Relevance: 1 = High &nbsp;|&nbsp; 2 = Medium &nbsp;|&nbsp; 3 = Low</p>
             <SecMinor>2.4 Course Content (Syllabus)</SecMinor>
             <Rich html={d.courseContent} />
-
             <SecMinor>2.5 Course Resources</SecMinor>
             <div style={{ paddingLeft: 10 }}>
-              <p
-                className="cdp-fb"
-                style={{ fontSize: "10.5pt", marginBottom: 4 }}
-              >
-                Text Books
-              </p>
-              {d.resources?.textBooks?.length > 0 ? (
-                <ol style={{ paddingLeft: 20, marginBottom: 15 }}>
-                  {d.resources.textBooks.map((t, i) => (
-                    <li key={i}>{t}</li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="cdp-empty">—</p>
-              )}
-
-              <p
-                className="cdp-fb"
-                style={{ fontSize: "10.5pt", marginBottom: 4 }}
-              >
-                Reference Books
-              </p>
-              {d.resources?.references?.length > 0 ? (
-                <ol style={{ paddingLeft: 20, marginBottom: 15 }}>
-                  {d.resources.references.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="cdp-empty">—</p>
-              )}
-
-              <p
-                className="cdp-fb"
-                style={{ fontSize: "10.5pt", marginBottom: 4 }}
-              >
-                Other Resources
-              </p>
-              {d.resources?.otherResources?.length > 0 ? (
-                <ul style={{ paddingLeft: 20, marginBottom: 15 }}>
-                  {d.resources.otherResources.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="cdp-empty">—</p>
-              )}
+              <p className="cdp-fb" style={{ fontSize: "9pt", marginBottom: 4 }}>Text Books</p>
+              {d.resources?.textBooks?.length > 0 ? <ol style={{ paddingLeft: 20, marginBottom: 15 }}>{d.resources.textBooks.map((t, i) => <li key={i}>{t}</li>)}</ol> : <p className="cdp-empty">—</p>}
+              <p className="cdp-fb" style={{ fontSize: "9pt", marginBottom: 4 }}>Reference Books</p>
+              {d.resources?.references?.length > 0 ? <ol style={{ paddingLeft: 20, marginBottom: 15 }}>{d.resources.references.map((r, i) => <li key={i}>{r}</li>)}</ol> : <p className="cdp-empty">—</p>}
+              <p className="cdp-fb" style={{ fontSize: "9pt", marginBottom: 4 }}>Other Resources</p>
+              {d.resources?.otherResources?.length > 0 ? <ul style={{ paddingLeft: 20, marginBottom: 15 }}>{d.resources.otherResources.map((r, i) => <li key={i}>{r}</li>)}</ul> : <p className="cdp-empty">—</p>}
             </div>
 
             <div className="page-break"></div>
 
-            {/* ── 3. TEACHING ────────────────────────────────────── */}
+            {/* 3. TEACHING */}
             <SecMajor id="sec-3">3. Teaching and Assessment</SecMajor>
-
-            <SecMinor>3.1 Teaching Schedule</SecMinor>
-            {d.teaching?.length > 0 ? (
-              <table className="cdp-t-teach">
-                <thead>
-                  <tr>
-                    <th>Sl. No.</th>
-                    <th style={{ textAlign: "left" }}>Lecture Topic</th>
-                    <th>Slides</th>
-                    <th>Videos</th>
-                  </tr>
-                </thead>
+            <SecMinor>3.1 Lesson Plan</SecMinor>
+            {!isEmpty(d.teachingHtml) ? <div className="cdp-rich">{parse(d.teachingHtml)}</div> : d.teaching?.length > 0 ? (
+              <table style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "25%" }} />
+                  <col style={{ width: "25%" }} />
+                  <col style={{ width: "25%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "8%" }} />
+                </colgroup>
+                <thead><tr><th>Class No.</th><th>Topic Title</th><th>Teaching Focus</th><th>Activity</th><th>CO(s)</th><th>Hrs</th></tr></thead>
                 <tbody>
                   {d.teaching.map((lec, i) => (
                     <tr key={i}>
-                      <td className="cdp-tc">{lec.number}</td>
+                      <td className="cdp-tc cdp-fb">{lec.number}</td>
                       <td>{lec.topic}</td>
-                      <td className="cdp-tc">{lec.slides}</td>
-                      <td className="cdp-tc">{lec.videos}</td>
+                      <td>{lec.teachingFocus}</td>
+                      <td>{lec.activity}</td>
+                      <td className="cdp-tc">{lec.cosCovered}</td>
+                      <td className="cdp-tc">{lec.hours}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : (
-              <p className="cdp-empty">—</p>
-            )}
+            ) : <p className="cdp-empty">—</p>}
 
             <SecMinor>3.2 Assessment Weight Distribution</SecMinor>
-            <AWBlock html={d.assessmentWeightHtml} data={d.assessmentWeight} />
+            {!isEmpty(d.assessmentWeightHtml) ? <div className="cdp-rich">{parse(d.assessmentWeightHtml)}</div> : <p className="cdp-empty">—</p>}
 
-            <SecMinor>3.3 Grading Criterion</SecMinor>
+            <SecMinor>3.3 Schedule of Assessments</SecMinor>
+            {!isEmpty(d.scheduleHtml) ? <div className="cdp-rich">{parse(d.scheduleHtml)}</div> : <p className="cdp-empty">—</p>}
+
+            <SecMinor>3.4 Passing and Grading Criterion</SecMinor>
+            <Rich html={d.passingCriterion} />
             <Rich html={d.gradingCriterion} />
-
-            {(d.attainmentCalculations?.recordingMarks ||
-              d.attainmentCalculations?.settingTargets) && (
-              <>
-                <div className="cdp-sec-minor" style={{ marginTop: 25 }}>
-                  Attainment Calculations
-                </div>
-                {d.attainmentCalculations.recordingMarks && (
-                  <>
-                    <Subsec>Recording Marks and Awarding Grades</Subsec>
-                    <Rich html={d.attainmentCalculations.recordingMarks} />
-                  </>
-                )}
-                {d.attainmentCalculations.settingTargets && (
-                  <>
-                    <Subsec>Setting Attainment Targets</Subsec>
-                    <div className="cdp-attain">
-                      <Rich html={d.attainmentCalculations.settingTargets} />
-                    </div>
-                  </>
-                )}
-              </>
-            )}
 
             <div className="page-break"></div>
 
-            {/* ── 4. OTHER ───────────────────────────────────────── */}
-            <SecMajor id="sec-4">4. Other Details</SecMajor>
+            {/* 4. ATTAINMENT & OTHER */}
+            <SecMajor id="sec-4">4. Attainment & Other</SecMajor>
+            
+            <SecMinor>4.1 Setting Attainment Targets</SecMinor>
+            <AttainmentTargetsBlock html={d.attainmentTargetsHtml} targets={d.attainmentTargets} />
 
-            <SecMinor>4.1 Assignment Details / Problem Based Learning</SecMinor>
+            <SecMinor>4.2 Performance Recording</SecMinor>
+            <PerformanceBlock html={d.performanceRecordingHtml} data={d.performanceRecording} />
+
+            <SecMinor>4.3 Performance Plotting & CAB</SecMinor>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <StaticGradeDistributionChart />
+              <StaticCOAttainmentChart />
+            </div>
+
+            <SecMinor>4.4 CAB Meeting, Analysis and Feedback</SecMinor>
+            <CABBlock html={d.cabAnalysis?.analysisNotes} targets={d.attainmentTargets} />
+
+            <SecMinor>4.5 Mapping of CO Attained Values</SecMinor>
+            <OMapBlock html={d.coAttainmentMappingHtml} matrix={d.coAttainmentMapping} />
+
+            <SecMinor>4.6 Feedback to Faculty Member</SecMinor>
+            {!isEmpty(d.feedbackHtml) ? <div className="cdp-rich">{parse(d.feedbackHtml)}</div> : <p className="cdp-empty">—</p>}
+
+            <SecMinor>4.7 Assignment Details</SecMinor>
             <Rich html={d.otherDetails?.assignmentDetails} />
 
-            <SecMinor>4.2 Academic Integrity Policy</SecMinor>
+            <SecMinor>4.8 Academic Integrity Policy</SecMinor>
             <Rich html={d.otherDetails?.academicIntegrity} />
 
-            {/* ── FOOTER ─────────────────────────────────────────── */}
+            {/* FOOTER */}
             <div className="cdp-sig">
-              <div className="cdp-sig-box">
-                <div className="cdp-sig-line">Prepared by — Faculty Member</div>
-              </div>
-              <div className="cdp-sig-box">
-                <div className="cdp-sig-line">
-                  Verified by — Head of Department
-                </div>
-              </div>
+              <div className="cdp-sig-box"><div className="cdp-sig-line">Prepared by — Faculty Member</div></div>
+              <div className="cdp-sig-box"><div className="cdp-sig-line">Verified by — Head of Department</div></div>
             </div>
-            <p className="cdp-footer">
-              Official Academic Record &nbsp;·&nbsp;{" "}
-              {f("schoolTitle") || f("department") || "Institution"}{" "}
-              &nbsp;·&nbsp; Generated:{" "}
-              {new Date().toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "long",
-                year: "numeric",
-              })}
-            </p>
+            <p className="cdp-footer">Official Academic Record &nbsp;·&nbsp; {f("schoolTitle") || f("department") || "Institution"} &nbsp;·&nbsp; Generated: {new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</p>
           </div>
         </div>
       </div>

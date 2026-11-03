@@ -2,9 +2,18 @@ import mongoose from "mongoose";
 
 const CourseOutcomeSchema = new mongoose.Schema(
   {
-    code: { type: String, default: "" }, // e.g. "CO1"
+    code: { type: String, default: "" },
     description: { type: String, default: "" },
-    mapping: { type: mongoose.Schema.Types.Mixed, default: {} },
+    application: { type: String, default: "" },
+    bloom: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
+const OnlineResourceSchema = new mongoose.Schema(
+  {
+    label: { type: String, default: "" },
+    url: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -14,32 +23,24 @@ const Section2Schema = new mongoose.Schema(
     courseCode: { type: String, required: true, index: true },
     version: { type: String, required: true },
 
-    // ── Aims & Objectives (HTML strings from RichTextEditor) ─────────────────
     aimsSummary: { type: String, default: "" },
     objectives: { type: String, default: "" },
 
-    // ── Course Outcomes ───────────────────────────────────────────────────────
-    courseOutcomes: { type: [CourseOutcomeSchema], default: [] },
-    courseOutcomesHtml: { type: String, default: "" }, // HTML table for display/print
-
-    // ── Outcome Map (CO × PO/PSO) ─────────────────────────────────────────────
+    // Structured Data
+    courseOutcomes: { type: [CourseOutcomeSchema], default: () => [] },
+    
     outcomeMap: {
-      raw: { type: String, default: "" }, // raw text from PDF
-      matrix: { type: [[String]], default: [] }, // structured 2-D array
+      matrix: { type: [[String]], default: () => [] },
     },
-    outcomeMapHtml: { type: String, default: "" }, // HTML table for display/print
 
-    // ── Audit ─────────────────────────────────────────────────────────────────
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Creater",
-      required: true,
-    },
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
+    // HTML Versions
+    courseOutcomesHtml: { type: String, default: "" },
+    outcomeMapHtml: { type: String, default: "" },
+
+    onlineResources: { type: [OnlineResourceSchema], default: () => [] },
+
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Creater", required: true },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", default: null },
     isApproved: { type: Boolean, default: false },
   },
   { timestamps: true },

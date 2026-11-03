@@ -43,41 +43,63 @@ const buildFormattedCD = (cd) => {
   const s4 = cd.section4_resources || {};
 
   return {
+    // ── Master ──
+    _id: cd._id,
     courseCode: cd.courseCode,
     courseTitle: cd.courseTitle,
     programName: cd.programName,
     cdVersion: cd.cdVersion,
     status: cd.status,
+    pdVersion: cd.pdVersion || null,
+    pdId: cd.pdId || null,
+    rejectionMessage: cd.rejectionMessage || "",
+    reviewComment: cd.reviewComment || "",
+    createdAt: cd.createdAt,
+    updatedAt: cd.updatedAt,
+
+    // ── Section 1 ──
     ...(s1.identity || {}),
     identity: s1.identity || {},
-    credits: s1.credits || {},
+    credits: s1.credits || { L: 0, T: 0, P: 0, total: 0 },
+    totalHours: s1.identity?.totalHours || 0,
+
+    // ── Section 2 ──
     aimsSummary: s2.aimsSummary || "",
     objectives: s2.objectives || "",
     courseOutcomes: s2.courseOutcomes || [],
     courseOutcomesHtml: s2.courseOutcomesHtml || "",
-    outcomeMap: s2.outcomeMap || {},
+    outcomeMap: s2.outcomeMap || { matrix: [] },
     outcomeMapHtml: s2.outcomeMapHtml || "",
+    onlineResources: s2.onlineResources || s4.onlineResources || [],
+
+    // ── Section 3 ──
     courseContent: s3.courseContent || "",
     teaching: s3.teaching || [],
-    resources: s4.resources || {
-      textBooks: [],
-      references: [],
-      otherResources: [],
-    },
+    teachingHtml: s3.teachingHtml || "",
+
+    // ── Section 4 ──
+    resources: s4.resources || { textBooks: [], references: [], otherResources: [] },
     assessmentWeight: s4.assessmentWeight || [],
     assessmentWeightHtml: s4.assessmentWeightHtml || "",
+    scheduleOfAssessments: s4.scheduleOfAssessments || {
+      weeks: ["0-4", "5-8", "9", "10-13", "14-16", "17", "18-20", "21-26"],
+      rows: { quiz: [], assignment: [], pbl: [], term1: [], term2: [], makeup: [] }
+    },
+    scheduleHtml: s4.scheduleHtml || "",
+    passingCriterion: s4.passingCriterion || "",
     gradingCriterion: s4.gradingCriterion || "",
-    attainmentCalculations: s4.attainmentCalculations || {
-      recordingMarks: "",
-      settingTargets: "",
-    },
-    otherDetails: s4.otherDetails || {
-      assignmentDetails: "",
-      academicIntegrity: "",
-    },
+    attainmentTargets: s4.attainmentTargets || [],
+    attainmentTargetsHtml: s4.attainmentTargetsHtml || "",
+    performanceRecording: s4.performanceRecording || {},
+    performanceRecordingHtml: s4.performanceRecordingHtml || "",
+    cabAnalysis: s4.cabAnalysis || { analysisNotes: "" },
+    coAttainmentMapping: s4.coAttainmentMapping || [],
+    coAttainmentMappingHtml: s4.coAttainmentMappingHtml || "",
+    feedback: s4.feedback || [],
+    feedbackHtml: s4.feedbackHtml || "",
+    otherDetails: s4.otherDetails || { assignmentDetails: "", academicIntegrity: "" },
   };
 };
-
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,

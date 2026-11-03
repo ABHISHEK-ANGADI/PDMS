@@ -27,6 +27,10 @@ const incrementVersion = (version = "1.0.0") => {
   return parts.join(".");
 };
 
+/**
+ * Flatten a populated CourseDocument into the client-facing CD shape.
+ * Matches the NEW schemas (Section 2/3/4).
+ */
 const buildFormattedCD = (cd) => {
   const s1 = cd.section1_identity || {};
   const s2 = cd.section2_outcomes || {};
@@ -34,46 +38,65 @@ const buildFormattedCD = (cd) => {
   const s4 = cd.section4_resources || {};
 
   return {
+    // ── Master ──
+    _id: cd._id,
     courseCode: cd.courseCode,
     courseTitle: cd.courseTitle,
     programName: cd.programName,
     cdVersion: cd.cdVersion,
     status: cd.status,
+    pdVersion: cd.pdVersion || null,
+    pdId: cd.pdId || null,
+    rejectionMessage: cd.rejectionMessage || "",
+    reviewComment: cd.reviewComment || "",
+    createdAt: cd.createdAt,
+    updatedAt: cd.updatedAt,
+
+    // ── Section 1 ──
     ...(s1.identity || {}),
     identity: s1.identity || {},
-    credits: s1.credits || {},
+    credits: s1.credits || { L: 0, T: 0, P: 0, total: 0 },
+
+    // ── Section 2 ──
     aimsSummary: s2.aimsSummary || "",
     objectives: s2.objectives || "",
     courseOutcomes: s2.courseOutcomes || [],
     courseOutcomesHtml: s2.courseOutcomesHtml || "",
-    outcomeMap: s2.outcomeMap || {},
+    outcomeMap: s2.outcomeMap || { matrix: [] },
     outcomeMapHtml: s2.outcomeMapHtml || "",
+    onlineResources: s2.onlineResources || s4.onlineResources || [],
+
+    // ── Section 3 ──
     courseContent: s3.courseContent || "",
     teaching: s3.teaching || [],
-    resources: s4.resources || {
-      textBooks: [],
-      references: [],
-      otherResources: [],
-    },
+    teachingHtml: s3.teachingHtml || "",
+
+    // ── Section 4 ──
+    resources: s4.resources || { textBooks: [], references: [], otherResources: [] },
     assessmentWeight: s4.assessmentWeight || [],
     assessmentWeightHtml: s4.assessmentWeightHtml || "",
+    scheduleOfAssessments: s4.scheduleOfAssessments || {},
+    scheduleHtml: s4.scheduleHtml || "",
+    passingCriterion: s4.passingCriterion || "",
     gradingCriterion: s4.gradingCriterion || "",
-    attainmentCalculations: s4.attainmentCalculations || {
-      recordingMarks: "",
-      settingTargets: "",
-    },
-    otherDetails: s4.otherDetails || {
-      assignmentDetails: "",
-      academicIntegrity: "",
-    },
+    attainmentTargets: s4.attainmentTargets || [],
+    attainmentTargetsHtml: s4.attainmentTargetsHtml || "",
+    performanceRecording: s4.performanceRecording || {},
+    performanceRecordingHtml: s4.performanceRecordingHtml || "",
+    cabAnalysis: s4.cabAnalysis || { analysisNotes: "" },
+    coAttainmentMapping: s4.coAttainmentMapping || [],
+    coAttainmentMappingHtml: s4.coAttainmentMappingHtml || "",
+    feedback: s4.feedback || [],
+    feedbackHtml: s4.feedbackHtml || "",
+    otherDetails: s4.otherDetails || { assignmentDetails: "", academicIntegrity: "" },
   };
 };
 
 /**
  * Given a flat list of CourseDocument docs (sorted DESC by createdAt)
  * and the current PD version, return:
- *  - currentCds: CDs that belong to THIS pdVersion (or legacy ones with pdVersion=null)
- *  - reusable:   CDs from OLDER pdVersions (or legacy) that can be cloned
+ *  - currentCds:   CDs that belong to THIS pdVersion (or legacy ones with pdVersion=null)
+ *  - reusable:     CDs from OLDER pdVersions (or legacy) that can be cloned
  */
 const resolveCDsForPDVersion = (allCdsForCourse, currentPdVersion) => {
   const curVer = currentPdVersion ? String(currentPdVersion) : null;
@@ -83,19 +106,12 @@ const resolveCDsForPDVersion = (allCdsForCourse, currentPdVersion) => {
 
   for (const cd of allCdsForCourse) {
     const cdVer = cd.pdVersion ? String(cd.pdVersion) : null;
-
-    const isForCurrent =
-      cdVer === null ||                       // legacy (no PD version tag) — applies to current
-      (curVer && cdVer === curVer);           // explicit match
-
+    const isForCurrent = cdVer === null || (curVer && cdVer === curVer);
     if (isForCurrent) currentCds.push(cd);
-    else reusable.push(cd);                   // belongs to a different (older) PD version
+    else reusable.push(cd);
   }
 
-  // Latest of the current set drives status/version
-  const latestCurrent = currentCds[0] || null;
-
-  return { currentCds, latestCurrent, reusable };
+  return { currentCds, latestCurrent: currentCds[0] || null, reusable };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,13 +132,11 @@ export const getAdminsForReview = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PARSE / IMPORT
+// PARSE / IMPORT (PDF)
 // ─────────────────────────────────────────────────────────────────────────────
 export const uploadAndParseCD = async (req, res) => {
   if (!req.file)
-    return res
-      .status(400)
-      .json({ success: false, message: "No file uploaded" });
+    return res.status(400).json({ success: false, message: "No file uploaded" });
 
   const filePath = req.file.path;
   let responseSent = false;
@@ -162,12 +176,8 @@ export const uploadAndParseCD = async (req, res) => {
       }
     }, 60000);
 
-    pythonProcess.stdout.on("data", (data) => {
-      dataString += data.toString();
-    });
-    pythonProcess.stderr.on("data", (data) => {
-      errorString += data.toString();
-    });
+    pythonProcess.stdout.on("data", (d) => (dataString += d.toString()));
+    pythonProcess.stderr.on("data", (d) => (errorString += d.toString()));
 
     pythonProcess.on("error", (error) => {
       clearTimeout(timeoutId);
@@ -201,9 +211,7 @@ export const uploadAndParseCD = async (req, res) => {
         const jsonEndIndex = dataString.lastIndexOf("}") + 1;
         if (jsonStartIndex === -1) throw new Error("No JSON found");
 
-        const parsed = JSON.parse(
-          dataString.slice(jsonStartIndex, jsonEndIndex),
-        );
+        const parsed = JSON.parse(dataString.slice(jsonStartIndex, jsonEndIndex));
         if (!parsed.success)
           return res
             .status(400)
@@ -228,7 +236,7 @@ export const uploadAndParseCD = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SAVE / UPDATE WORKFLOW (FIXED FOR DUPLICATE KEY ERRORS)
+// SAVE / UPDATE WORKFLOW
 // ─────────────────────────────────────────────────────────────────────────────
 export const createOrUpdateCD = async (req, res) => {
   try {
@@ -254,16 +262,26 @@ export const createOrUpdateCD = async (req, res) => {
     const creatorId = req.id;
     const updateAll = sectionsToUpdate.includes("all");
 
+    // ── Dirty tracking keys (aligned to UI) ──
     const s1Keys = ["basic", "identity", "credits"];
-    const s2Keys = ["basic", "courseOutcomes", "outcomeMap"];
+    const s2Keys = [
+      "basic",
+      "courseOutcomes",
+      "outcomeMap",
+      "onlineResources",
+    ];
     const s3Keys = ["basic", "courseContent", "teaching"];
     const s4Keys = [
       "basic",
-      "assessmentWeight",
-      "gradingCriterion",
-      "attainmentCalculations",
-      "otherDetails",
       "resources",
+      "onlineResources",
+      "assessmentWeight",
+      "scheduleOfAssessments",
+      "passingCriterion",
+      "gradingCriterion",
+      "attainmentTargets",
+      "feedback",
+      "otherDetails",
     ];
 
     const dirty = (keys) =>
@@ -279,7 +297,6 @@ export const createOrUpdateCD = async (req, res) => {
     });
     const isActuallyNew = !existingCD;
 
-    // Check if we need to bump the version
     let needsVersionBump = false;
     if (
       !isActuallyNew &&
@@ -301,7 +318,6 @@ export const createOrUpdateCD = async (req, res) => {
 
     // ── SCENARIO 1: Brand New OR Bumping Version ──
     if (isActuallyNew || needsVersionBump) {
-      // Must create completely new section documents for the new snapshot
       const s1 = await CD_Section1_Identity.create({
         courseCode,
         version: newCdVersion,
@@ -309,17 +325,18 @@ export const createOrUpdateCD = async (req, res) => {
         credits: cdData.credits || {},
         createdBy: creatorId,
       });
+
       const s2 = await CD_Section2_Outcomes.create({
         courseCode,
         version: newCdVersion,
         aimsSummary: cdData.aimsSummary || "",
         objectives: cdData.objectives || "",
         courseOutcomes: cdData.courseOutcomes || [],
-        courseOutcomesHtml: cdData.courseOutcomesHtml || "",
-        outcomeMap: cdData.outcomeMap || {},
-        outcomeMapHtml: cdData.outcomeMapHtml || "",
+        outcomeMap: cdData.outcomeMap || { matrix: [] },
+        onlineResources: cdData.onlineResources || [],
         createdBy: creatorId,
       });
+
       const s3 = await CD_Section3_Syllabus.create({
         courseCode,
         version: newCdVersion,
@@ -327,34 +344,46 @@ export const createOrUpdateCD = async (req, res) => {
         teaching: cdData.teaching || [],
         createdBy: creatorId,
       });
+
       const s4 = await CD_Section4_Resources.create({
         courseCode,
         version: newCdVersion,
         resources: cdData.resources || {},
+        onlineResources: cdData.onlineResources || [],
         assessmentWeight: cdData.assessmentWeight || [],
         assessmentWeightHtml: cdData.assessmentWeightHtml || "",
+        scheduleOfAssessments: cdData.scheduleOfAssessments || {},
+        scheduleHtml: cdData.scheduleHtml || "",
+        passingCriterion: cdData.passingCriterion || "",
         gradingCriterion: cdData.gradingCriterion || "",
-        attainmentCalculations: cdData.attainmentCalculations || {},
+        attainmentTargets: cdData.attainmentTargets || [],
+        attainmentTargetsHtml: cdData.attainmentTargetsHtml || "",
+        performanceRecording: cdData.performanceRecording || {},
+        performanceRecordingHtml: cdData.performanceRecordingHtml || "",
+        cabAnalysis: cdData.cabAnalysis || {},
+        coAttainmentMapping: cdData.coAttainmentMapping || [],
+        coAttainmentMappingHtml: cdData.coAttainmentMappingHtml || "",
+        feedback: cdData.feedback || [],
+        feedbackHtml: cdData.feedbackHtml || "",
         otherDetails: cdData.otherDetails || {},
         createdBy: creatorId,
       });
-
-    const masterCD = await CourseDocument.create({
-  courseCode,
-  courseTitle,
-  programName,
-  cdVersion: newCdVersion,
-  section1_identity: s1._id,
-  section2_outcomes: s2._id,
-  section3_syllabus: s3._id,
-  section4_resources: s4._id,
-  status: status || (isActuallyNew ? "Draft" : existingCD.status),
-  createdBy: creatorId,
-  approvedBy: reviewerId || null,
-  previousVersion: isActuallyNew ? null : existingCD._id,
-  pdVersion: pdVersion || null,      // ← NEW
-  pdId: pdId || null,                // ← NEW
-});
+      const masterCD = await CourseDocument.create({
+        courseCode,
+        courseTitle,
+        programName,
+        cdVersion: newCdVersion,
+        section1_identity: s1._id,
+        section2_outcomes: s2._id,
+        section3_syllabus: s3._id,
+        section4_resources: s4._id,
+        status: status || (isActuallyNew ? "Draft" : existingCD.status),
+        createdBy: creatorId,
+        approvedBy: reviewerId || null,
+        previousVersion: isActuallyNew ? null : existingCD._id,
+        pdVersion: pdVersion || null,
+        pdId: pdId || null,
+      });
 
       return res.json({
         success: true,
@@ -367,8 +396,7 @@ export const createOrUpdateCD = async (req, res) => {
       });
     }
 
-    // ── SCENARIO 2: Updating an Existing Draft In-Place ──
-    // Uses findByIdAndUpdate to prevent duplicate key constraint errors
+    // ── SCENARIO 2: In-place Draft Update ──
     if (s1Dirty) {
       if (s1_Id)
         await CD_Section1_Identity.findByIdAndUpdate(s1_Id, {
@@ -386,15 +414,15 @@ export const createOrUpdateCD = async (req, res) => {
         s1_Id = s._id;
       }
     }
+
     if (s2Dirty) {
       if (s2_Id)
         await CD_Section2_Outcomes.findByIdAndUpdate(s2_Id, {
           aimsSummary: cdData.aimsSummary,
           objectives: cdData.objectives,
           courseOutcomes: cdData.courseOutcomes,
-          courseOutcomesHtml: cdData.courseOutcomesHtml,
           outcomeMap: cdData.outcomeMap,
-          outcomeMapHtml: cdData.outcomeMapHtml,
+          onlineResources: cdData.onlineResources,
         });
       else {
         const s = await CD_Section2_Outcomes.create({
@@ -403,14 +431,14 @@ export const createOrUpdateCD = async (req, res) => {
           aimsSummary: cdData.aimsSummary || "",
           objectives: cdData.objectives || "",
           courseOutcomes: cdData.courseOutcomes || [],
-          courseOutcomesHtml: cdData.courseOutcomesHtml || "",
-          outcomeMap: cdData.outcomeMap || {},
-          outcomeMapHtml: cdData.outcomeMapHtml || "",
+          outcomeMap: cdData.outcomeMap || { matrix: [] },
+          onlineResources: cdData.onlineResources || [],
           createdBy: creatorId,
         });
         s2_Id = s._id;
       }
     }
+
     if (s3Dirty) {
       if (s3_Id)
         await CD_Section3_Syllabus.findByIdAndUpdate(s3_Id, {
@@ -428,14 +456,27 @@ export const createOrUpdateCD = async (req, res) => {
         s3_Id = s._id;
       }
     }
+
     if (s4Dirty) {
       if (s4_Id)
         await CD_Section4_Resources.findByIdAndUpdate(s4_Id, {
           resources: cdData.resources,
+          onlineResources: cdData.onlineResources,
           assessmentWeight: cdData.assessmentWeight,
           assessmentWeightHtml: cdData.assessmentWeightHtml,
+          scheduleOfAssessments: cdData.scheduleOfAssessments,
+          scheduleHtml: cdData.scheduleHtml,
+          passingCriterion: cdData.passingCriterion,
           gradingCriterion: cdData.gradingCriterion,
-          attainmentCalculations: cdData.attainmentCalculations,
+          attainmentTargets: cdData.attainmentTargets,
+          attainmentTargetsHtml: cdData.attainmentTargetsHtml,
+          performanceRecording: cdData.performanceRecording,
+          performanceRecordingHtml: cdData.performanceRecordingHtml,
+          cabAnalysis: cdData.cabAnalysis,
+          coAttainmentMapping: cdData.coAttainmentMapping,
+          coAttainmentMappingHtml: cdData.coAttainmentMappingHtml,
+          feedback: cdData.feedback,
+          feedbackHtml: cdData.feedbackHtml,
           otherDetails: cdData.otherDetails,
         });
       else {
@@ -443,10 +484,13 @@ export const createOrUpdateCD = async (req, res) => {
           courseCode,
           version: newCdVersion,
           resources: cdData.resources || {},
+          onlineResources: cdData.onlineResources || [],
           assessmentWeight: cdData.assessmentWeight || [],
-          assessmentWeightHtml: cdData.assessmentWeightHtml || "",
+          scheduleOfAssessments: cdData.scheduleOfAssessments || {},
+          passingCriterion: cdData.passingCriterion || "",
           gradingCriterion: cdData.gradingCriterion || "",
-          attainmentCalculations: cdData.attainmentCalculations || {},
+          attainmentTargets: cdData.attainmentTargets || [],
+          feedback: cdData.feedback || [],
           otherDetails: cdData.otherDetails || {},
           createdBy: creatorId,
         });
@@ -454,21 +498,18 @@ export const createOrUpdateCD = async (req, res) => {
       }
     }
 
-    // Update Master Document
-  // Update Master Document
-existingCD.courseTitle = courseTitle;
-existingCD.programName = programName;
-existingCD.status = status || "Draft";
-if (reviewerId && status === "UnderReview") {
-  existingCD.approvedBy = reviewerId;
-}
-existingCD.section1_identity = s1_Id;
-existingCD.section2_outcomes = s2_Id;
-existingCD.section3_syllabus = s3_Id;
-existingCD.section4_resources = s4_Id;
-if (pdVersion && !existingCD.pdVersion) existingCD.pdVersion = pdVersion; // ← NEW
-if (pdId && !existingCD.pdId) existingCD.pdId = pdId;                       // ← NEW
-await existingCD.save();
+    // Update Master
+    existingCD.courseTitle = courseTitle;
+    existingCD.programName = programName;
+    existingCD.status = status || "Draft";
+    if (reviewerId && status === "UnderReview") existingCD.approvedBy = reviewerId;
+    existingCD.section1_identity = s1_Id;
+    existingCD.section2_outcomes = s2_Id;
+    existingCD.section3_syllabus = s3_Id;
+    existingCD.section4_resources = s4_Id;
+    if (pdVersion && !existingCD.pdVersion) existingCD.pdVersion = pdVersion;
+    if (pdId && !existingCD.pdId) existingCD.pdId = pdId;
+    await existingCD.save();
 
     return res.json({
       success: true,
@@ -488,7 +529,6 @@ await existingCD.save();
 // ─────────────────────────────────────────────────────────────────────────────
 // FETCH ENDPOINTS
 // ─────────────────────────────────────────────────────────────────────────────
-
 const POPULATE_CHAIN = [
   "section1_identity",
   "section2_outcomes",
@@ -516,13 +556,10 @@ export const getCDById = async (req, res) => {
 export const getLatestCD = async (req, res) => {
   try {
     const { courseCode } = req.params;
-
-    // ── NEW: validate input up front ──
     if (!courseCode || !courseCode.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Course code is required.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Course code is required." });
     }
 
     const cd = await CourseDocument.findOne({ courseCode })
@@ -532,7 +569,6 @@ export const getLatestCD = async (req, res) => {
       .populate(POPULATE_CHAIN[2])
       .populate(POPULATE_CHAIN[3]);
 
-    // ── NEW: no history is a VALID state, not an error ──
     if (!cd) {
       return res.status(200).json({
         success: true,
@@ -555,6 +591,7 @@ export const getLatestCD = async (req, res) => {
     });
   }
 };
+
 export const getRecentVersions = async (req, res) => {
   try {
     const versions = await CourseDocument.find({
@@ -562,7 +599,7 @@ export const getRecentVersions = async (req, res) => {
     })
       .sort({ createdAt: -1 })
       .limit(5)
-      .select("cdVersion createdAt status");
+      .select("cdVersion createdAt status pdVersion");
     return res.json({ success: true, versions });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -572,17 +609,13 @@ export const getRecentVersions = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DASHBOARD & ASSIGNED COURSES
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const getCDDashboardStats = async (req, res) => {
   try {
     const creatorId = req.id;
     const [total, drafts, underReview, approved, recentDocs] =
       await Promise.all([
         CourseDocument.countDocuments({ createdBy: creatorId }),
-        CourseDocument.countDocuments({
-          createdBy: creatorId,
-          status: "Draft",
-        }),
+        CourseDocument.countDocuments({ createdBy: creatorId, status: "Draft" }),
         CourseDocument.countDocuments({
           createdBy: creatorId,
           status: "UnderReview",
@@ -635,7 +668,6 @@ export const getCDCreatorHistory = async (req, res) => {
         versionNo: cd.cdVersion,
         status: cd.status,
         updatedAt: cd.updatedAt,
-        // Fallback checks both fields to ensure the comment is captured
         changeSummary: cd.reviewComment || cd.rejectionMessage || "",
         cdData: buildFormattedCD(cd),
       });
@@ -652,8 +684,6 @@ export const getCDCreatorHistory = async (req, res) => {
       .json({ success: false, message: "Failed to fetch document history" });
   }
 };
-
-
 
 export const getAssignedCDs = async (req, res) => {
   try {
@@ -682,7 +712,6 @@ export const getAssignedCDs = async (req, res) => {
       pds = await PD.find(pdFilter).lean();
     }
 
-    // ── Build PD groups ──
     const pdGroups = new Map();
 
     pds.forEach((pd) => {
@@ -742,7 +771,11 @@ export const getAssignedCDs = async (req, res) => {
 
       pd.pd_data?.section4?.professionalElectives?.forEach((grp, gi) => {
         grp.courses?.forEach((c) =>
-          pushCourse(c, grp.title || `PE Group ${gi + 1}`, "Professional Elective"),
+          pushCourse(
+            c,
+            grp.title || `PE Group ${gi + 1}`,
+            "Professional Elective",
+          ),
         );
       });
 
@@ -757,7 +790,6 @@ export const getAssignedCDs = async (req, res) => {
       });
     });
 
-    // ── Fetch all CDs for these courses (defensive populate) ──
     const allCourseCodes = Array.from(
       new Set(
         Array.from(pdGroups.values()).flatMap((g) =>
@@ -768,9 +800,7 @@ export const getAssignedCDs = async (req, res) => {
 
     let allCDs = [];
     try {
-      allCDs = await CourseDocument.find({
-        courseCode: { $in: allCourseCodes },
-      })
+      allCDs = await CourseDocument.find({ courseCode: { $in: allCourseCodes } })
         .sort({ createdAt: -1 })
         .populate("createdBy", "name email")
         .populate("approvedBy", "name email")
@@ -787,7 +817,6 @@ export const getAssignedCDs = async (req, res) => {
         .lean();
     }
 
-    // Group CDs by courseCode (timeline DESC — latest first)
     const cdsByCourse = new Map();
     allCDs.forEach((cd) => {
       if (!cdsByCourse.has(cd.courseCode)) cdsByCourse.set(cd.courseCode, []);
@@ -805,7 +834,6 @@ export const getAssignedCDs = async (req, res) => {
       .filter((g) => g.courses.length > 0)
       .sort(sortPDs);
 
-    // ── Build final tree — version-aware ──
     const pdTree = sortedGroups.map((group, idx) => {
       const isLatest = idx === 0;
       const groupVer = group.pdVersion;
@@ -824,8 +852,8 @@ export const getAssignedCDs = async (req, res) => {
           pdVersion: cd.pdVersion || null,
           createdAt: cd.createdAt,
           updatedAt: cd.updatedAt,
-          createdByName: cd.createdBy?.name || cd.createdByName || "Unknown",
-          reviewerName: cd.approvedBy?.name || cd.reviewerName || null,
+          createdByName: cd.createdBy?.name || "Unknown",
+          reviewerName: cd.approvedBy?.name || null,
           reviewComment: cd.reviewComment || null,
           rejectionMessage: cd.rejectionMessage || null,
         }));
@@ -842,16 +870,14 @@ export const getAssignedCDs = async (req, res) => {
 
         return {
           ...course,
-          // Status of the CD that belongs to THIS PD version
           cdId: latestCurrent?._id || null,
           cdStatus: latestCurrent?.status || "Not Started",
           cdVersion: latestCurrent?.cdVersion || null,
           cdUpdatedAt: latestCurrent?.updatedAt || null,
           cdCreatedByName: latestCurrent?.createdBy?.name || null,
           cdReviewerName: latestCurrent?.approvedBy?.name || null,
-          // Historicals + reusable sources
           cdTimeline: timeline,
-          reusableSources,                 // ← NEW: what can be cloned
+          reusableSources,
           hasReusableHistory: reusable.length > 0,
           isHistoricalSnapshot: !isLatest,
         };
@@ -879,9 +905,8 @@ export const getAssignedCDs = async (req, res) => {
   }
 };
 
-
 // ─────────────────────────────────────────────────────────────────────────────
-// REUSE / CLONE PREVIOUS CD INTO CURRENT PD VERSION
+// REUSE / CLONE PREVIOUS CD → CURRENT PD VERSION
 // ─────────────────────────────────────────────────────────────────────────────
 export const cloneCDToCurrentVersion = async (req, res) => {
   try {
@@ -895,7 +920,6 @@ export const cloneCDToCurrentVersion = async (req, res) => {
         .json({ success: false, message: "pdVersion is required." });
     }
 
-    // Load the source CD with all populated sections
     const source = await CourseDocument.findById(sourceCdId)
       .populate("section1_identity")
       .populate("section2_outcomes")
@@ -911,8 +935,6 @@ export const cloneCDToCurrentVersion = async (req, res) => {
 
     const courseCode = targetCourseCode || source.courseCode;
 
-    // Guard: if a CD already exists for (courseCode + pdVersion), do not overwrite —
-    // return that one so the UI can just open it.
     const existingForVersion = await CourseDocument.findOne({
       courseCode,
       pdVersion: String(pdVersion),
@@ -927,23 +949,14 @@ export const cloneCDToCurrentVersion = async (req, res) => {
       });
     }
 
-    // Compute fresh cdVersion for the target course (independent of source)
     const latestForCourse = await CourseDocument.findOne({ courseCode }).sort({
       createdAt: -1,
     });
 
-    // Determine next cdVersion — if source & target are same course, bump; else start 1.0.0
-    let newCdVersion = "1.0.0";
-    if (latestForCourse && latestForCourse.courseCode === courseCode) {
-      newCdVersion = latestForCourse.cdVersion
-        ? incrementVersion(latestForCourse.cdVersion)
-        : "1.0.0";
-    } else if (latestForCourse) {
-      // Different course codes — still start fresh
-      newCdVersion = "1.0.0";
-    }
+    const newCdVersion = latestForCourse?.cdVersion
+      ? incrementVersion(latestForCourse.cdVersion)
+      : "1.0.0";
 
-    // Deep-copy each section as new documents
     const s1 = source.section1_identity || {};
     const s2 = source.section2_outcomes || {};
     const s3 = source.section3_syllabus || {};
@@ -956,17 +969,18 @@ export const cloneCDToCurrentVersion = async (req, res) => {
       credits: s1.credits || {},
       createdBy: creatorId,
     });
+
     const newS2 = await CD_Section2_Outcomes.create({
       courseCode,
       version: newCdVersion,
       aimsSummary: s2.aimsSummary || "",
       objectives: s2.objectives || "",
       courseOutcomes: s2.courseOutcomes || [],
-      courseOutcomesHtml: s2.courseOutcomesHtml || "",
-      outcomeMap: s2.outcomeMap || {},
-      outcomeMapHtml: s2.outcomeMapHtml || "",
+      outcomeMap: s2.outcomeMap || { matrix: [] },
+      onlineResources: s2.onlineResources || [],
       createdBy: creatorId,
     });
+
     const newS3 = await CD_Section3_Syllabus.create({
       courseCode,
       version: newCdVersion,
@@ -974,14 +988,18 @@ export const cloneCDToCurrentVersion = async (req, res) => {
       teaching: s3.teaching || [],
       createdBy: creatorId,
     });
+
     const newS4 = await CD_Section4_Resources.create({
       courseCode,
       version: newCdVersion,
       resources: s4.resources || {},
+      onlineResources: s4.onlineResources || [],
       assessmentWeight: s4.assessmentWeight || [],
-      assessmentWeightHtml: s4.assessmentWeightHtml || "",
+      scheduleOfAssessments: s4.scheduleOfAssessments || {},
+      passingCriterion: s4.passingCriterion || "",
       gradingCriterion: s4.gradingCriterion || "",
-      attainmentCalculations: s4.attainmentCalculations || {},
+      attainmentTargets: s4.attainmentTargets || [],
+      feedback: s4.feedback || [],
       otherDetails: s4.otherDetails || {},
       createdBy: creatorId,
     });
@@ -1017,8 +1035,9 @@ export const cloneCDToCurrentVersion = async (req, res) => {
       .json({ success: false, message: error.message || "Clone failed." });
   }
 };
+
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. UNIVERSAL AI TABLE & LIST PARSER
+// UNIVERSAL AI TABLE PARSER
 // ─────────────────────────────────────────────────────────────────────────────
 export const parseTableWithAI = async (req, res) => {
   try {
@@ -1038,11 +1057,15 @@ export const parseTableWithAI = async (req, res) => {
     if (tableType === "outcomeMap")
       schemaInstruction = `Return a 2D JSON array of strings. First array MUST be headers starting with "CO/PO".`;
     else if (tableType === "assessmentWeight")
-      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "co", "q1", "q2", "q3", "t1", "t2", "t3", "a1", "a2", "see", "cie", "total". Values must be numbers except "co".`;
-    else if (tableType === "teaching")
-      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "number", "topic", "slides", "videos".`;
+      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "co","q1","q2","q3","t1","t2","t3","a1","a2","see","cie","total". Values must be numbers except "co".`;
+    else if (tableType === "teaching" || tableType === "lessonPlan")
+      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "number","unitNo","topic","teachingFocus","activity","cosCovered","hours".`;
+    else if (tableType === "courseOutcomes")
+      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "code","description","application","bloom".`;
     else if (tableType === "list")
-      schemaInstruction = `Return a JSON array of strings. Each string represents a single item in the list (e.g. a textbook name or reference link).`;
+      schemaInstruction = `Return a JSON array of strings. Each string is a single item.`;
+    else if (tableType === "onlineResources")
+      schemaInstruction = `Return a JSON array of objects. Keys MUST strictly be: "label","url".`;
 
     const systemPrompt = `You are a data parsing assistant. Target Type: ${tableType}
 Instructions: "${prompt || "Parse the provided data perfectly into the schema."}"
@@ -1060,6 +1083,10 @@ CRITICAL: ${schemaInstruction} Output ONLY valid JSON.`;
       .json({ success: false, message: "Failed to parse data." });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI — RICH TEXT FIELD ENHANCER
+// ─────────────────────────────────────────────────────────────────────────────
 export const enhanceFieldWithAI = async (req, res) => {
   try {
     const { prompt, currentContent, fieldName } = req.body;
@@ -1079,7 +1106,7 @@ TASK: Apply the instructions. Return ONLY valid HTML (<p>, <ul>, <li>, <table>, 
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: systemPrompt }] }],
     });
-    let enhancedText = result.response
+    const enhancedText = result.response
       .text()
       .replace(/```html\n?/gi, "")
       .replace(/```\n?/gi, "")
@@ -1096,6 +1123,9 @@ TASK: Apply the instructions. Return ONLY valid HTML (<p>, <ul>, <li>, <table>, 
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AI — SECTION POLISHER (JSON-in / JSON-out, same shape)
+// ─────────────────────────────────────────────────────────────────────────────
 export const enhanceSectionWithAI = async (req, res) => {
   try {
     const { sectionName, sectionData } = req.body;
