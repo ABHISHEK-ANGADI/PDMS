@@ -11,7 +11,8 @@ import {
   getAssignedCDs,
   enhanceFieldWithAI, // <-- NEW
   enhanceSectionWithAI, // <-- NEW
-  parseTableWithAI, // <-- NEW
+  parseTableWithAI,
+  cloneCDToCurrentVersion, // <-- NEW
 } from "../controllers/cdCreaterController.js";
 import authCreater from "../middlewares/createrAuth.js";
 import upload from "../middlewares/multer.js";
@@ -29,7 +30,10 @@ cdCreaterRouter.get("/assigned", getAssignedCDs);
 cdCreaterRouter.get("/versions/:courseCode", getRecentVersions);
 cdCreaterRouter.get("/fetch/:id", getCDById);
 cdCreaterRouter.get("/latest/:courseCode", getLatestCD);
-
+cdCreaterRouter.post(
+  "/clone-from/:sourceCdId",
+  cloneCDToCurrentVersion,
+);
 // ── NEW: AI Endpoints for CD Editor ───────────────────────────────────────
 cdCreaterRouter.post("/ai-enhance", enhanceFieldWithAI);
 cdCreaterRouter.post("/ai-enhance-section", enhanceSectionWithAI);

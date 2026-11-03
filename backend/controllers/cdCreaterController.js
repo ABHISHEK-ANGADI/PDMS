@@ -11,6 +11,7 @@ import CD_Section4_Resources from "../models/cd/CD_Section4_Resources.js";
 import Admin from "../models/Admin.js";
 import PD from "../models/pd/PD.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Creater from "../models/Creater.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +67,35 @@ const buildFormattedCD = (cd) => {
       academicIntegrity: "",
     },
   };
+};
+
+/**
+ * Given a flat list of CourseDocument docs (sorted DESC by createdAt)
+ * and the current PD version, return:
+ *  - currentCds: CDs that belong to THIS pdVersion (or legacy ones with pdVersion=null)
+ *  - reusable:   CDs from OLDER pdVersions (or legacy) that can be cloned
+ */
+const resolveCDsForPDVersion = (allCdsForCourse, currentPdVersion) => {
+  const curVer = currentPdVersion ? String(currentPdVersion) : null;
+
+  const currentCds = [];
+  const reusable = [];
+
+  for (const cd of allCdsForCourse) {
+    const cdVer = cd.pdVersion ? String(cd.pdVersion) : null;
+
+    const isForCurrent =
+      cdVer === null ||                       // legacy (no PD version tag) — applies to current
+      (curVer && cdVer === curVer);           // explicit match
+
+    if (isForCurrent) currentCds.push(cd);
+    else reusable.push(cd);                   // belongs to a different (older) PD version
+  }
+
+  // Latest of the current set drives status/version
+  const latestCurrent = currentCds[0] || null;
+
+  return { currentCds, latestCurrent, reusable };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +241,8 @@ export const createOrUpdateCD = async (req, res) => {
       sectionsToUpdate = [],
       cdData,
       reviewerId,
+      pdVersion,
+      pdId,
     } = req.body;
 
     if (!courseCode) {
@@ -307,20 +339,22 @@ export const createOrUpdateCD = async (req, res) => {
         createdBy: creatorId,
       });
 
-      const masterCD = await CourseDocument.create({
-        courseCode,
-        courseTitle,
-        programName,
-        cdVersion: newCdVersion,
-        section1_identity: s1._id,
-        section2_outcomes: s2._id,
-        section3_syllabus: s3._id,
-        section4_resources: s4._id,
-        status: status || (isActuallyNew ? "Draft" : existingCD.status),
-        createdBy: creatorId,
-        approvedBy: reviewerId || null,
-        previousVersion: isActuallyNew ? null : existingCD._id,
-      });
+    const masterCD = await CourseDocument.create({
+  courseCode,
+  courseTitle,
+  programName,
+  cdVersion: newCdVersion,
+  section1_identity: s1._id,
+  section2_outcomes: s2._id,
+  section3_syllabus: s3._id,
+  section4_resources: s4._id,
+  status: status || (isActuallyNew ? "Draft" : existingCD.status),
+  createdBy: creatorId,
+  approvedBy: reviewerId || null,
+  previousVersion: isActuallyNew ? null : existingCD._id,
+  pdVersion: pdVersion || null,      // ← NEW
+  pdId: pdId || null,                // ← NEW
+});
 
       return res.json({
         success: true,
@@ -421,17 +455,20 @@ export const createOrUpdateCD = async (req, res) => {
     }
 
     // Update Master Document
-    existingCD.courseTitle = courseTitle;
-    existingCD.programName = programName;
-    existingCD.status = status || "Draft";
-    if (reviewerId && status === "UnderReview") {
-      existingCD.approvedBy = reviewerId;
-    }
-    existingCD.section1_identity = s1_Id;
-    existingCD.section2_outcomes = s2_Id;
-    existingCD.section3_syllabus = s3_Id;
-    existingCD.section4_resources = s4_Id;
-    await existingCD.save();
+  // Update Master Document
+existingCD.courseTitle = courseTitle;
+existingCD.programName = programName;
+existingCD.status = status || "Draft";
+if (reviewerId && status === "UnderReview") {
+  existingCD.approvedBy = reviewerId;
+}
+existingCD.section1_identity = s1_Id;
+existingCD.section2_outcomes = s2_Id;
+existingCD.section3_syllabus = s3_Id;
+existingCD.section4_resources = s4_Id;
+if (pdVersion && !existingCD.pdVersion) existingCD.pdVersion = pdVersion; // ← NEW
+if (pdId && !existingCD.pdId) existingCD.pdId = pdId;                       // ← NEW
+await existingCD.save();
 
     return res.json({
       success: true,
@@ -478,24 +515,46 @@ export const getCDById = async (req, res) => {
 
 export const getLatestCD = async (req, res) => {
   try {
-    const cd = await CourseDocument.findOne({
-      courseCode: req.params.courseCode,
-    })
+    const { courseCode } = req.params;
+
+    // ── NEW: validate input up front ──
+    if (!courseCode || !courseCode.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Course code is required.",
+      });
+    }
+
+    const cd = await CourseDocument.findOne({ courseCode })
       .sort({ createdAt: -1 })
       .populate(POPULATE_CHAIN[0])
       .populate(POPULATE_CHAIN[1])
       .populate(POPULATE_CHAIN[2])
       .populate(POPULATE_CHAIN[3]);
-    if (!cd)
-      return res
-        .status(404)
-        .json({ success: false, message: "No history found for this course." });
-    return res.json({ success: true, cd: buildFormattedCD(cd) });
+
+    // ── NEW: no history is a VALID state, not an error ──
+    if (!cd) {
+      return res.status(200).json({
+        success: true,
+        cd: null,
+        isFirstVersion: true,
+        message: "No previous versions found. This will be the first version.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      cd: buildFormattedCD(cd),
+      isFirstVersion: false,
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("getLatestCD error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load latest version. Please try again.",
+    });
   }
 };
-
 export const getRecentVersions = async (req, res) => {
   try {
     const versions = await CourseDocument.find({
@@ -593,12 +652,16 @@ export const getCDCreatorHistory = async (req, res) => {
       .json({ success: false, message: "Failed to fetch document history" });
   }
 };
+
+
+
 export const getAssignedCDs = async (req, res) => {
   try {
     const creatorId = req.id;
-    const isMine = (c) => c?.assigneeId && String(c.assigneeId) === String(creatorId);
+    const isMine = (c) =>
+      c?.assigneeId && String(c.assigneeId) === String(creatorId);
 
-    const pds = await PD.find({
+    const pdFilter = {
       $or: [
         { "pd_data.semesters.courses.assigneeId": creatorId },
         { "pd_data.semesters.categories.courses.assigneeId": creatorId },
@@ -606,43 +669,87 @@ export const getAssignedCDs = async (req, res) => {
         { "pd_data.section4.openElectives.courses.assigneeId": creatorId },
         { "pd_data.section4.technicalCompetencyCourses.assigneeId": creatorId },
       ],
-    }).populate("created_by", "name");
+    };
 
-    let assignedCourses = [];
+    let pds;
+    try {
+      pds = await PD.find(pdFilter)
+        .populate("created_by", "name email")
+        .populate("approved_by", "name email")
+        .lean();
+    } catch (popErr) {
+      console.warn("getAssignedCDs: PD populate failed.", popErr.message);
+      pds = await PD.find(pdFilter).lean();
+    }
+
+    // ── Build PD groups ──
+    const pdGroups = new Map();
 
     pds.forEach((pd) => {
-      const pName = pd.program_name;
-      const pCode = pd.program_id;
-      const creatorName = pd.created_by?.name || "Admin";
+      const pdKey = String(pd._id);
+      const pdVersion = pd.version_no ?? null;
+      const pdUpdatedAt = pd.updated_at ?? pd.updatedAt ?? null;
+      const pdCreatedAt = pd.created_at ?? pd.createdAt ?? null;
+
+      const pdMeta = {
+        pdId: pd._id,
+        pdVersion,
+        pdSchemeYear: pd.scheme_year ?? null,
+        pdEffectiveAy: pd.effective_ay ?? null,
+        pdStatus: pd.status ?? null,
+        pdUpdatedAt,
+        pdCreatedAt,
+        programName: pd.program_name,
+        programCode: pd.program_id,
+        pdCreatorName: pd.created_by?.name || "Admin",
+        pdReviewerName: pd.approved_by?.name || null,
+        pdTotalCredits: pd.total_credits ?? 0,
+        pdAcademicCredits: pd.academic_credits ?? 0,
+      };
+
+      if (!pdGroups.has(pdKey)) pdGroups.set(pdKey, { ...pdMeta, courses: [] });
+      const group = pdGroups.get(pdKey);
 
       const pushCourse = (c, context, type) => {
-        if (isMine(c)) {
-          assignedCourses.push({
-            courseCode: c.code, 
-            courseTitle: c.title,
-            programName: pName, 
-            programCode: pCode,
-            type: c.type || type || "Theory", 
-            credits: c.credits,
-            context: context, 
-            pdCreatorName: creatorName,
-          });
-        }
+        if (!isMine(c)) return;
+        const exists = group.courses.some(
+          (x) => x.courseCode === c.code && x.context === context,
+        );
+        if (exists) return;
+        group.courses.push({
+          courseCode: c.code,
+          courseTitle: c.title,
+          programName: pd.program_name,
+          programCode: pd.program_id,
+          type: c.type || type || "Theory",
+          credits: c.credits,
+          context,
+          pdCreatorName: pdMeta.pdCreatorName,
+          pdId: pd._id,
+          pdVersion,
+          pdUpdatedAt,
+        });
       };
 
       pd.pd_data?.semesters?.forEach((sem) => {
         sem.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no}`));
         sem.categories?.forEach((cat) => {
-          cat.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no} (${cat.categoryName})`));
+          cat.courses?.forEach((c) =>
+            pushCourse(c, `Semester ${sem.sem_no} (${cat.categoryName})`),
+          );
         });
       });
 
       pd.pd_data?.section4?.professionalElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) => pushCourse(c, grp.title || `PE Group ${gi + 1}`, "Professional Elective"));
+        grp.courses?.forEach((c) =>
+          pushCourse(c, grp.title || `PE Group ${gi + 1}`, "Professional Elective"),
+        );
       });
 
       pd.pd_data?.section4?.openElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) => pushCourse(c, grp.title || `OE Group ${gi + 1}`, "Open Elective"));
+        grp.courses?.forEach((c) =>
+          pushCourse(c, grp.title || `OE Group ${gi + 1}`, "Open Elective"),
+        );
       });
 
       pd.pd_data?.section4?.technicalCompetencyCourses?.forEach((c) => {
@@ -650,42 +757,266 @@ export const getAssignedCDs = async (req, res) => {
       });
     });
 
-    // ── NEW: FETCH EXISTING CD STATUSES ──
-    // Extract all unique course codes from the assigned list
-    const courseCodes = assignedCourses.map(c => c.courseCode);
-    
-    // Find any existing CDs created by this user for these courses
-    const existingCDs = await CourseDocument.find({
-      courseCode: { $in: courseCodes },
-      createdBy: creatorId
-    }).sort({ createdAt: -1 }); // Sort latest first
+    // ── Fetch all CDs for these courses (defensive populate) ──
+    const allCourseCodes = Array.from(
+      new Set(
+        Array.from(pdGroups.values()).flatMap((g) =>
+          g.courses.map((c) => c.courseCode),
+        ),
+      ),
+    );
 
-    // Create a map of the latest CD for each course code
-    const latestCDMap = new Map();
-    existingCDs.forEach(cd => {
-      if (!latestCDMap.has(cd.courseCode)) {
-        latestCDMap.set(cd.courseCode, cd);
-      }
+    let allCDs = [];
+    try {
+      allCDs = await CourseDocument.find({
+        courseCode: { $in: allCourseCodes },
+      })
+        .sort({ createdAt: -1 })
+        .populate("createdBy", "name email")
+        .populate("approvedBy", "name email")
+        .lean();
+    } catch (popErr) {
+      console.warn(
+        "getAssignedCDs: CourseDocument populate failed.",
+        popErr.message,
+      );
+      allCDs = await CourseDocument.find({
+        courseCode: { $in: allCourseCodes },
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+    }
+
+    // Group CDs by courseCode (timeline DESC — latest first)
+    const cdsByCourse = new Map();
+    allCDs.forEach((cd) => {
+      if (!cdsByCourse.has(cd.courseCode)) cdsByCourse.set(cd.courseCode, []);
+      cdsByCourse.get(cd.courseCode).push(cd);
     });
 
-    // Enrich the assigned courses with their CD status
-    const enrichedCourses = assignedCourses.map(course => {
-      const existingCD = latestCDMap.get(course.courseCode);
+    const sortPDs = (a, b) => {
+      const na = parseFloat(a.pdVersion);
+      const nb = parseFloat(b.pdVersion);
+      if (!isNaN(na) && !isNaN(nb) && na !== nb) return nb - na;
+      return new Date(b.pdUpdatedAt || 0) - new Date(a.pdUpdatedAt || 0);
+    };
+
+    const sortedGroups = Array.from(pdGroups.values())
+      .filter((g) => g.courses.length > 0)
+      .sort(sortPDs);
+
+    // ── Build final tree — version-aware ──
+    const pdTree = sortedGroups.map((group, idx) => {
+      const isLatest = idx === 0;
+      const groupVer = group.pdVersion;
+
+      const enrichedCourses = group.courses.map((course) => {
+        const allForCourse = cdsByCourse.get(course.courseCode) || [];
+        const { latestCurrent, reusable } = resolveCDsForPDVersion(
+          allForCourse,
+          groupVer,
+        );
+
+        const timeline = allForCourse.map((cd) => ({
+          _id: cd._id,
+          cdVersion: cd.cdVersion,
+          status: cd.status,
+          pdVersion: cd.pdVersion || null,
+          createdAt: cd.createdAt,
+          updatedAt: cd.updatedAt,
+          createdByName: cd.createdBy?.name || cd.createdByName || "Unknown",
+          reviewerName: cd.approvedBy?.name || cd.reviewerName || null,
+          reviewComment: cd.reviewComment || null,
+          rejectionMessage: cd.rejectionMessage || null,
+        }));
+
+        const reusableSources = reusable.map((cd) => ({
+          _id: cd._id,
+          cdVersion: cd.cdVersion,
+          status: cd.status,
+          pdVersion: cd.pdVersion || null,
+          updatedAt: cd.updatedAt,
+          createdByName: cd.createdBy?.name || "Unknown",
+          courseTitle: cd.courseTitle,
+        }));
+
+        return {
+          ...course,
+          // Status of the CD that belongs to THIS PD version
+          cdId: latestCurrent?._id || null,
+          cdStatus: latestCurrent?.status || "Not Started",
+          cdVersion: latestCurrent?.cdVersion || null,
+          cdUpdatedAt: latestCurrent?.updatedAt || null,
+          cdCreatedByName: latestCurrent?.createdBy?.name || null,
+          cdReviewerName: latestCurrent?.approvedBy?.name || null,
+          // Historicals + reusable sources
+          cdTimeline: timeline,
+          reusableSources,                 // ← NEW: what can be cloned
+          hasReusableHistory: reusable.length > 0,
+          isHistoricalSnapshot: !isLatest,
+        };
+      });
+
       return {
-        ...course,
-        cdId: existingCD ? existingCD._id : null,
-        cdStatus: existingCD ? existingCD.status : "Not Started",
-        cdVersion: existingCD ? existingCD.cdVersion : null,
+        ...group,
+        isLatest,
+        courseCount: enrichedCourses.length,
+        courses: enrichedCourses,
       };
     });
 
-    res.json({ success: true, assignedCourses: enrichedCourses });
+    return res.json({
+      success: true,
+      pdGroups: pdTree,
+      assignedCourses: pdTree,
+      generatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("Error fetching assigned CDs:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch assigned courses." });
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch assigned courses." });
   }
 };
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REUSE / CLONE PREVIOUS CD INTO CURRENT PD VERSION
+// ─────────────────────────────────────────────────────────────────────────────
+export const cloneCDToCurrentVersion = async (req, res) => {
+  try {
+    const { sourceCdId } = req.params;
+    const { pdVersion, pdId, targetCourseCode } = req.body;
+    const creatorId = req.id;
+
+    if (!pdVersion) {
+      return res
+        .status(400)
+        .json({ success: false, message: "pdVersion is required." });
+    }
+
+    // Load the source CD with all populated sections
+    const source = await CourseDocument.findById(sourceCdId)
+      .populate("section1_identity")
+      .populate("section2_outcomes")
+      .populate("section3_syllabus")
+      .populate("section4_resources")
+      .lean();
+
+    if (!source) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Source CD not found." });
+    }
+
+    const courseCode = targetCourseCode || source.courseCode;
+
+    // Guard: if a CD already exists for (courseCode + pdVersion), do not overwrite —
+    // return that one so the UI can just open it.
+    const existingForVersion = await CourseDocument.findOne({
+      courseCode,
+      pdVersion: String(pdVersion),
+    }).sort({ createdAt: -1 });
+
+    if (existingForVersion) {
+      return res.status(200).json({
+        success: true,
+        alreadyExists: true,
+        message: `A CD already exists for ${courseCode} on PD v${pdVersion}.`,
+        cdId: existingForVersion._id,
+      });
+    }
+
+    // Compute fresh cdVersion for the target course (independent of source)
+    const latestForCourse = await CourseDocument.findOne({ courseCode }).sort({
+      createdAt: -1,
+    });
+
+    // Determine next cdVersion — if source & target are same course, bump; else start 1.0.0
+    let newCdVersion = "1.0.0";
+    if (latestForCourse && latestForCourse.courseCode === courseCode) {
+      newCdVersion = latestForCourse.cdVersion
+        ? incrementVersion(latestForCourse.cdVersion)
+        : "1.0.0";
+    } else if (latestForCourse) {
+      // Different course codes — still start fresh
+      newCdVersion = "1.0.0";
+    }
+
+    // Deep-copy each section as new documents
+    const s1 = source.section1_identity || {};
+    const s2 = source.section2_outcomes || {};
+    const s3 = source.section3_syllabus || {};
+    const s4 = source.section4_resources || {};
+
+    const newS1 = await CD_Section1_Identity.create({
+      courseCode,
+      version: newCdVersion,
+      identity: { ...(s1.identity || {}), courseCode },
+      credits: s1.credits || {},
+      createdBy: creatorId,
+    });
+    const newS2 = await CD_Section2_Outcomes.create({
+      courseCode,
+      version: newCdVersion,
+      aimsSummary: s2.aimsSummary || "",
+      objectives: s2.objectives || "",
+      courseOutcomes: s2.courseOutcomes || [],
+      courseOutcomesHtml: s2.courseOutcomesHtml || "",
+      outcomeMap: s2.outcomeMap || {},
+      outcomeMapHtml: s2.outcomeMapHtml || "",
+      createdBy: creatorId,
+    });
+    const newS3 = await CD_Section3_Syllabus.create({
+      courseCode,
+      version: newCdVersion,
+      courseContent: s3.courseContent || "",
+      teaching: s3.teaching || [],
+      createdBy: creatorId,
+    });
+    const newS4 = await CD_Section4_Resources.create({
+      courseCode,
+      version: newCdVersion,
+      resources: s4.resources || {},
+      assessmentWeight: s4.assessmentWeight || [],
+      assessmentWeightHtml: s4.assessmentWeightHtml || "",
+      gradingCriterion: s4.gradingCriterion || "",
+      attainmentCalculations: s4.attainmentCalculations || {},
+      otherDetails: s4.otherDetails || {},
+      createdBy: creatorId,
+    });
+
+    const newCD = await CourseDocument.create({
+      courseCode,
+      courseTitle: source.courseTitle,
+      programName: source.programName,
+      cdVersion: newCdVersion,
+      section1_identity: newS1._id,
+      section2_outcomes: newS2._id,
+      section3_syllabus: newS3._id,
+      section4_resources: newS4._id,
+      status: "Draft",
+      createdBy: creatorId,
+      approvedBy: null,
+      previousVersion: source._id,
+      pdVersion: String(pdVersion),
+      pdId: pdId || null,
+      clonedFrom: source._id,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Created draft v${newCdVersion} for ${courseCode} on PD v${pdVersion}.`,
+      cdId: newCD._id,
+      version: newCdVersion,
+    });
+  } catch (error) {
+    console.error("cloneCDToCurrentVersion error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: error.message || "Clone failed." });
+  }
+};
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. UNIVERSAL AI TABLE & LIST PARSER
 // ─────────────────────────────────────────────────────────────────────────────

@@ -53,6 +53,8 @@ import {
   SplitSquareHorizontal,
   Wand2,
   Database,
+  Copy,
+  Inbox,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -242,34 +244,10 @@ const transformFetchedToFrontend = (fetched = {}) => {
 };
 
 const STEP_CONFIG = [
-  {
-    id: 1,
-    label: "Course Info",
-    shortLabel: "Info",
-    icon: Briefcase,
-    color: "blue",
-  },
-  {
-    id: 2,
-    label: "Course Details",
-    shortLabel: "Details",
-    icon: BookMarked,
-    color: "violet",
-  },
-  {
-    id: 3,
-    label: "Teaching & Assess",
-    shortLabel: "Assess",
-    icon: BarChart3,
-    color: "emerald",
-  },
-  {
-    id: 4,
-    label: "Other Details",
-    shortLabel: "Other",
-    icon: Shield,
-    color: "amber",
-  },
+  { id: 1, label: "Course Info", shortLabel: "Info", icon: Briefcase, color: "blue" },
+  { id: 2, label: "Course Details", shortLabel: "Details", icon: BookMarked, color: "violet" },
+  { id: 3, label: "Teaching & Assess", shortLabel: "Assess", icon: BarChart3, color: "emerald" },
+  { id: 4, label: "Other Details", shortLabel: "Other", icon: Shield, color: "amber" },
 ];
 
 const identityFields = [
@@ -330,28 +308,12 @@ const RichTextEditor = ({ value, onChange, placeholder, height = 220 }) => {
       readonly: false,
       placeholder: placeholder || "Start typing…",
       buttons: [
-        "bold",
-        "italic",
-        "underline",
-        "|",
-        "ul",
-        "ol",
-        "|",
-        "outdent",
-        "indent",
-        "|",
-        "font",
-        "fontsize",
-        "brush",
-        "paragraph",
-        "|",
-        "table",
-        "link",
-        "|",
-        "align",
-        "undo",
-        "redo",
-        "|",
+        "bold", "italic", "underline", "|",
+        "ul", "ol", "|",
+        "outdent", "indent", "|",
+        "font", "fontsize", "brush", "paragraph", "|",
+        "table", "link", "|",
+        "align", "undo", "redo", "|",
         "source",
       ],
       height,
@@ -424,10 +386,7 @@ const StepProgressBar = React.memo(
               <span className="hidden md:block truncate">{step.label}</span>
             </button>
             {idx < STEP_CONFIG.length - 1 && (
-              <ChevronRight
-                size={14}
-                className="text-gray-300 flex-shrink-0 mx-0.5"
-              />
+              <ChevronRight size={14} className="text-gray-300 flex-shrink-0 mx-0.5" />
             )}
           </React.Fragment>
         ))}
@@ -437,31 +396,17 @@ const StepProgressBar = React.memo(
 );
 
 const SectionCard = ({
-  icon,
-  iconBg,
-  title,
-  subtitle,
-  action,
-  onPolish,
-  isPolishing,
-  children,
-  noPad,
+  icon, iconBg, title, subtitle, action, onPolish, isPolishing, children, noPad,
 }) => (
   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-5">
     <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-100 bg-stone-50/50">
       <div className="flex items-start gap-3 min-w-0">
-        <div
-          className={`p-2 rounded-lg flex-shrink-0 ${iconBg || "bg-stone-100"}`}
-        >
+        <div className={`p-2 rounded-lg flex-shrink-0 ${iconBg || "bg-stone-100"}`}>
           {icon}
         </div>
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-stone-800 leading-snug">
-            {title}
-          </h3>
-          {subtitle && (
-            <p className="text-xs text-stone-500 mt-0.5">{subtitle}</p>
-          )}
+          <h3 className="text-sm font-semibold text-stone-800 leading-snug">{title}</h3>
+          {subtitle && <p className="text-xs text-stone-500 mt-0.5">{subtitle}</p>}
         </div>
       </div>
       <div className="flex-shrink-0 flex items-center gap-2">
@@ -491,19 +436,13 @@ const SectionHeader = ({ icon, iconBg, title, subtitle, action, compact }) => (
     className={`flex items-start justify-between gap-3 ${compact ? "mb-4" : "mb-5 pb-4 border-b border-gray-100"}`}
   >
     <div className="flex items-start gap-3 min-w-0">
-      <div
-        className={`p-2 rounded-lg flex-shrink-0 ${iconBg || "bg-gray-100"}`}
-      >
+      <div className={`p-2 rounded-lg flex-shrink-0 ${iconBg || "bg-gray-100"}`}>
         {icon}
       </div>
       <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-gray-800 leading-snug">
-          {title}
-        </h3>
+        <h3 className="text-sm font-semibold text-gray-800 leading-snug">{title}</h3>
         {subtitle && (
-          <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
-            {subtitle}
-          </p>
+          <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{subtitle}</p>
         )}
       </div>
     </div>
@@ -518,7 +457,6 @@ const FieldLabel = ({ children, required }) => (
   </label>
 );
 
-// ADDED ONOPENAI PROP TO RESOURCE LIST FOR AI SUGGESTIONS
 const ResourceList = ({ label, items, onChange, onOpenAI }) => (
   <div className="space-y-2">
     <div className="flex items-center justify-between">
@@ -575,16 +513,10 @@ const ResourceList = ({ label, items, onChange, onOpenAI }) => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPLEX EDITORS (Paste, Outcomes, Assessment)
+// COMPLEX EDITORS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PasteModal = ({
-  title,
-  description,
-  placeholder,
-  onClose,
-  onConfirm,
-}) => {
+const PasteModal = ({ title, description, placeholder, onClose, onConfirm }) => {
   const [raw, setRaw] = useState("");
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -686,9 +618,7 @@ const OutcomeMapEditor = ({ matrix, onChange, markDirty, onOpenAI }) => {
     }
     const maxLen = Math.max(...newMatrix.map((r) => r.length));
     markDirty("outcomeMap");
-    onChange(
-      newMatrix.map((r) => [...r, ...Array(maxLen - r.length).fill("")]),
-    );
+    onChange(newMatrix.map((r) => [...r, ...Array(maxLen - r.length).fill("")]));
     setShowPaste(false);
     toast.success("Outcome map imported!");
   };
@@ -697,9 +627,7 @@ const OutcomeMapEditor = ({ matrix, onChange, markDirty, onOpenAI }) => {
     return (
       <div className="text-center py-10 bg-gray-50 border border-dashed border-gray-200 rounded-xl">
         <GraduationCap size={28} className="text-gray-300 mx-auto mb-3" />
-        <p className="text-sm text-gray-400 mb-4">
-          No outcome map defined yet.
-        </p>
+        <p className="text-sm text-gray-400 mb-4">No outcome map defined yet.</p>
         <button
           onClick={() => {
             markDirty("outcomeMap");
@@ -877,10 +805,7 @@ const AssessmentWeightEditor = ({ data, onChange, markDirty, onOpenAI }) => {
       const cells = trimmed.includes("\t")
         ? trimmed.split("\t")
         : trimmed.split(/\s+/);
-      const coMatch = cells[0]
-        ?.toUpperCase()
-        .trim()
-        .match(/CO(\d+)/);
+      const coMatch = cells[0]?.toUpperCase().trim().match(/CO(\d+)/);
       if (!coMatch) continue;
       const idx = parseInt(coMatch[1]) - 1;
       if (idx < 0 || idx > 5) continue;
@@ -888,17 +813,8 @@ const AssessmentWeightEditor = ({ data, onChange, markDirty, onOpenAI }) => {
       const cur = { ...newRows[idx] };
       if (nums.length >= 11)
         [
-          cur.q1,
-          cur.q2,
-          cur.q3,
-          cur.t1,
-          cur.t2,
-          cur.t3,
-          cur.a1,
-          cur.a2,
-          cur.see,
-          cur.cie,
-          cur.total,
+          cur.q1, cur.q2, cur.q3, cur.t1, cur.t2, cur.t3,
+          cur.a1, cur.a2, cur.see, cur.cie, cur.total,
         ] = nums;
       else if (nums.length >= 4) {
         cur.q1 = nums[0];
@@ -940,99 +856,41 @@ const AssessmentWeightEditor = ({ data, onChange, markDirty, onOpenAI }) => {
         <table className="min-w-full border-collapse text-xs text-center bg-white">
           <thead className="border-b border-gray-200">
             <tr className="bg-gray-50">
-              <th
-                rowSpan={2}
-                className="px-3 py-2.5 border-r border-gray-200 font-semibold text-gray-600 uppercase tracking-wider text-[10px] align-middle"
-              >
-                CO
-              </th>
-              <th
-                colSpan={3}
-                className="px-2 py-2 border-r border-gray-200 font-semibold text-blue-600 bg-blue-50/50 text-[10px]"
-              >
-                Quiz (15)
-              </th>
-              <th
-                colSpan={3}
-                className="px-2 py-2 border-r border-gray-200 font-semibold text-violet-600 bg-violet-50/50 text-[10px]"
-              >
-                Test (25)
-              </th>
-              <th
-                colSpan={2}
-                className="px-2 py-2 border-r border-gray-200 font-semibold text-purple-600 bg-purple-50/50 text-[10px]"
-              >
-                Assign (20)
-              </th>
-              <th
-                rowSpan={2}
-                className="px-2 py-2.5 border-r border-gray-200 font-semibold text-blue-700 bg-blue-50 text-[10px] uppercase tracking-wider align-middle"
-              >
-                CIE
-              </th>
-              <th
-                rowSpan={2}
-                className="px-2 py-2.5 border-r border-gray-200 font-semibold text-amber-700 bg-amber-50 text-[10px] uppercase tracking-wider align-middle"
-              >
-                SEE
-              </th>
-              <th
-                rowSpan={2}
-                className="px-2 py-2.5 font-semibold text-emerald-700 bg-emerald-50 text-[10px] uppercase tracking-wider align-middle"
-              >
-                Total
-              </th>
+              <th rowSpan={2} className="px-3 py-2.5 border-r border-gray-200 font-semibold text-gray-600 uppercase tracking-wider text-[10px] align-middle">CO</th>
+              <th colSpan={3} className="px-2 py-2 border-r border-gray-200 font-semibold text-blue-600 bg-blue-50/50 text-[10px]">Quiz (15)</th>
+              <th colSpan={3} className="px-2 py-2 border-r border-gray-200 font-semibold text-violet-600 bg-violet-50/50 text-[10px]">Test (25)</th>
+              <th colSpan={2} className="px-2 py-2 border-r border-gray-200 font-semibold text-purple-600 bg-purple-50/50 text-[10px]">Assign (20)</th>
+              <th rowSpan={2} className="px-2 py-2.5 border-r border-gray-200 font-semibold text-blue-700 bg-blue-50 text-[10px] uppercase tracking-wider align-middle">CIE</th>
+              <th rowSpan={2} className="px-2 py-2.5 border-r border-gray-200 font-semibold text-amber-700 bg-amber-50 text-[10px] uppercase tracking-wider align-middle">SEE</th>
+              <th rowSpan={2} className="px-2 py-2.5 font-semibold text-emerald-700 bg-emerald-50 text-[10px] uppercase tracking-wider align-middle">Total</th>
             </tr>
             <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500">
               {["Q1", "Q2", "Q3"].map((l) => (
-                <th key={l} className="px-2 py-1.5 bg-blue-50/30">
-                  {l}
-                </th>
+                <th key={l} className="px-2 py-1.5 bg-blue-50/30">{l}</th>
               ))}
               {["T1", "T2", "T3"].map((l) => (
-                <th key={l} className="px-2 py-1.5 bg-violet-50/30">
-                  {l}
-                </th>
+                <th key={l} className="px-2 py-1.5 bg-violet-50/30">{l}</th>
               ))}
               {["A1", "A2"].map((l, i) => (
-                <th
-                  key={l}
-                  className={`px-2 py-1.5 bg-purple-50/30${i === 1 ? " border-r border-gray-200" : ""}`}
-                >
-                  {l}
-                </th>
+                <th key={l} className={`px-2 py-1.5 bg-purple-50/30${i === 1 ? " border-r border-gray-200" : ""}`}>{l}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {data.map((row, idx) => (
               <tr key={idx} className="hover:bg-gray-50/60 transition-colors">
-                <td className="px-3 py-2 border-r border-gray-100 font-semibold text-gray-700 bg-gray-50/80 text-[11px]">
-                  {row.co}
-                </td>
+                <td className="px-3 py-2 border-r border-gray-100 font-semibold text-gray-700 bg-gray-50/80 text-[11px]">{row.co}</td>
                 <td className="px-1 py-1.5">{numInput(idx, "q1")}</td>
                 <td className="px-1 py-1.5">{numInput(idx, "q2")}</td>
-                <td className="px-1 py-1.5 border-r border-gray-100">
-                  {numInput(idx, "q3")}
-                </td>
+                <td className="px-1 py-1.5 border-r border-gray-100">{numInput(idx, "q3")}</td>
                 <td className="px-1 py-1.5">{numInput(idx, "t1")}</td>
                 <td className="px-1 py-1.5">{numInput(idx, "t2")}</td>
-                <td className="px-1 py-1.5 border-r border-gray-100">
-                  {numInput(idx, "t3")}
-                </td>
+                <td className="px-1 py-1.5 border-r border-gray-100">{numInput(idx, "t3")}</td>
                 <td className="px-1 py-1.5">{numInput(idx, "a1")}</td>
-                <td className="px-1 py-1.5 border-r border-gray-100">
-                  {numInput(idx, "a2")}
-                </td>
-                <td className="px-2 py-1.5 border-r border-gray-100 font-bold text-blue-700 bg-blue-50/40 text-xs">
-                  {row.cie}
-                </td>
-                <td className="px-1 py-1.5 border-r border-gray-100 bg-amber-50/30">
-                  {numInput(idx, "see")}
-                </td>
-                <td className="px-2 py-1.5 font-bold text-emerald-700 bg-emerald-50/40 text-xs">
-                  {row.total}
-                </td>
+                <td className="px-1 py-1.5 border-r border-gray-100">{numInput(idx, "a2")}</td>
+                <td className="px-2 py-1.5 border-r border-gray-100 font-bold text-blue-700 bg-blue-50/40 text-xs">{row.cie}</td>
+                <td className="px-1 py-1.5 border-r border-gray-100 bg-amber-50/30">{numInput(idx, "see")}</td>
+                <td className="px-2 py-1.5 font-bold text-emerald-700 bg-emerald-50/40 text-xs">{row.total}</td>
               </tr>
             ))}
           </tbody>
@@ -1071,16 +929,10 @@ const AssessmentWeightEditor = ({ data, onChange, markDirty, onOpenAI }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MODALS (AI & REVIEW & HISTORY)
+// MODALS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ReviewSubmitModal = ({
-  isOpen,
-  onClose,
-  onConfirm,
-  axios,
-  createrToken,
-}) => {
+const ReviewSubmitModal = ({ isOpen, onClose, onConfirm, axios, createrToken }) => {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedAdminId, setSelectedAdminId] = useState("");
@@ -1111,12 +963,8 @@ const ReviewSubmitModal = ({
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
           <div>
-            <h3 className="text-base font-semibold text-gray-800">
-              Submit for Review
-            </h3>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Select an Admin / Reviewer
-            </p>
+            <h3 className="text-base font-semibold text-gray-800">Submit for Review</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Select an Admin / Reviewer</p>
           </div>
           <button
             onClick={onClose}
@@ -1131,9 +979,7 @@ const ReviewSubmitModal = ({
               <RefreshCw className="animate-spin text-gray-400" size={20} />
             </div>
           ) : admins.length === 0 ? (
-            <div className="text-center py-6 text-sm text-gray-400">
-              No active admins available.
-            </div>
+            <div className="text-center py-6 text-sm text-gray-400">No active admins available.</div>
           ) : (
             admins.map((admin) => (
               <label
@@ -1149,12 +995,8 @@ const ReviewSubmitModal = ({
                     className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                   />
                   <div>
-                    <p className="text-sm font-semibold text-gray-800">
-                      {admin.name}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {admin.department || admin.email}
-                    </p>
+                    <p className="text-sm font-semibold text-gray-800">{admin.name}</p>
+                    <p className="text-xs text-gray-500">{admin.department || admin.email}</p>
                   </div>
                 </div>
               </label>
@@ -1181,44 +1023,80 @@ const ReviewSubmitModal = ({
   );
 };
 
-const AssignedCDsModal = ({
-  isOpen,
-  onClose,
-  axios,
-  createrToken,
-  onLoadAssigned,
-}) => {
-  const [assignedCourses, setAssignedCourses] = useState([]);
+// ── AssignedCDsModal — clean empty state, no error toast on no assignment ──
+const AssignedCDsModal = ({ isOpen, onClose, axios, createrToken, onLoadAssigned }) => {
+  const [assignedCourses, setAssignedCourses] = useState([]); // flat, legacy fallback
+  const [pdGroups, setPdGroups] = useState([]); // PD-first hierarchy
+  const [expandedPDs, setExpandedPDs] = useState({}); // { [pdId]: true }
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null); // only for real network errors
 
   useEffect(() => {
-    if (isOpen) {
-      const fetchAssigned = async () => {
-        setLoading(true);
-        try {
-          const { data } = await axios.get("/api/creater/cd/assigned", {
-            headers: { createrToken },
-          });
+    if (!isOpen) return;
 
-          if (data.success) {
-            // Smart Deduplication: If the same course code comes up multiple times, just keep the first one
+    const fetchAssigned = async () => {
+      setLoading(true);
+      setFetchError(null);
+      try {
+        const { data } = await axios.get("/api/creater/cd/assigned", {
+          headers: { createrToken },
+        });
+
+        if (data.success) {
+          const groups = data.pdGroups || [];
+          const flat = data.assignedCourses || [];
+
+          if (groups.length > 0) {
+            setPdGroups(groups);
+            setAssignedCourses([]);
+            const latest = groups[0];
+            setExpandedPDs(latest ? { [String(latest.pdId)]: true } : {});
+          } else {
             const map = new Map();
-            data.assignedCourses.forEach((c) => {
+            flat.forEach((c) => {
               if (!map.has(c.courseCode)) map.set(c.courseCode, c);
             });
             setAssignedCourses(Array.from(map.values()));
+            setPdGroups([]);
+            setExpandedPDs({});
           }
-        } catch {
-          toast.error("Failed to load assigned courses.");
-        } finally {
-          setLoading(false);
+        } else {
+          // Server said success:false → this is NOT "no assignment", it's a
+          // real failure. Keep it as an error.
+          setFetchError(data.message || "Failed to load assigned courses.");
+          setAssignedCourses([]);
+          setPdGroups([]);
+          setExpandedPDs({});
         }
-      };
-      fetchAssigned();
-    }
+      } catch (err) {
+        // Network error / 5xx → genuine error, show toast once.
+        console.error("Assigned fetch error:", err);
+        toast.error("Failed to load assigned courses.");
+        setFetchError("Network error. Please try again.");
+        setAssignedCourses([]);
+        setPdGroups([]);
+        setExpandedPDs({});
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAssigned();
   }, [isOpen, axios, createrToken]);
 
+  const togglePD = useCallback((pdId) => {
+    const key = String(pdId);
+    setExpandedPDs((prev) => (prev[key] ? {} : { [key]: true }));
+  }, []);
+
   if (!isOpen) return null;
+
+  const totalCourses = pdGroups.reduce((s, g) => s + (g.courses?.length || 0), 0);
+  const isEmpty =
+    !loading &&
+    !fetchError &&
+    pdGroups.length === 0 &&
+    assignedCourses.length === 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -1229,9 +1107,7 @@ const AssignedCDsModal = ({
               <BookOpen size={20} />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-stone-800">
-                Assigned Courses
-              </h3>
+              <h3 className="text-lg font-bold text-stone-800">Assigned Courses</h3>
               <p className="text-xs text-stone-500 mt-0.5">
                 Courses assigned to you by Program Coordinators.
               </p>
@@ -1244,14 +1120,246 @@ const AssignedCDsModal = ({
             <X size={20} />
           </button>
         </div>
+
         <div className="p-6 overflow-y-auto flex-1 bg-stone-50/30">
           {loading ? (
             <div className="flex justify-center py-10">
               <RefreshCw className="animate-spin text-stone-400" size={24} />
             </div>
-          ) : assignedCourses.length === 0 ? (
-            <div className="text-center py-10 text-stone-500 text-sm">
-              No courses assigned to you currently.
+          ) : fetchError ? (
+            /* ── Real error state ── */
+            <div className="text-center py-10">
+              <AlertTriangle size={32} className="text-rose-400 mx-auto mb-3" />
+              <p className="text-sm font-semibold text-rose-600">{fetchError}</p>
+              <p className="text-xs text-stone-500 mt-1">
+                Check your connection and try again.
+              </p>
+              <button
+                onClick={() => {
+                  setFetchError(null);
+                  setLoading(true);
+                }}
+                className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-stone-900 rounded-lg hover:bg-stone-800 transition-colors"
+              >
+                <RefreshCw size={12} /> Retry
+              </button>
+            </div>
+          ) : isEmpty ? (
+            /* ── Clean "not assigned" empty state ── */
+            <div className="text-center py-12">
+              <Inbox size={40} className="text-stone-300 mx-auto mb-3" />
+              <h4 className="text-sm font-bold text-stone-700">
+                No courses assigned to you
+              </h4>
+              <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto">
+                A Program Coordinator hasn't assigned any courses to your
+                account yet. Once they do, you'll see them here.
+              </p>
+            </div>
+          ) : pdGroups.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1 mb-1">
+                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">
+                  {totalCourses} course{totalCourses !== 1 ? "s" : ""} across{" "}
+                  {pdGroups.length} PD version{pdGroups.length > 1 ? "s" : ""}
+                </span>
+              </div>
+
+              {pdGroups.map((pdGroup) => {
+                const key = String(pdGroup.pdId);
+                const isOpen = !!expandedPDs[key];
+                const isLatest = !!pdGroup.isLatest;
+                const courses = pdGroup.courses || [];
+
+                return (
+                  <div
+                    key={key}
+                    className={`border rounded-xl overflow-hidden transition-all ${
+                      isLatest
+                        ? "border-indigo-300 bg-white shadow-sm"
+                        : "border-stone-200 bg-stone-50/40"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => togglePD(key)}
+                      className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left transition-colors ${
+                        isLatest
+                          ? "bg-indigo-50/60 hover:bg-indigo-50"
+                          : "bg-stone-50 hover:bg-stone-100"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <GraduationCap
+                          size={16}
+                          className={isLatest ? "text-indigo-600" : "text-stone-400"}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`text-xs font-bold truncate ${
+                                isLatest ? "text-stone-800" : "text-stone-600"
+                              }`}
+                            >
+                              {pdGroup.programName || "Untitled Program"}
+                              {pdGroup.programCode ? ` (${pdGroup.programCode})` : ""}
+                            </span>
+                            <span
+                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase border ${
+                                isLatest
+                                  ? "bg-indigo-600 text-white border-indigo-700"
+                                  : "bg-stone-200 text-stone-600 border-stone-300"
+                              }`}
+                            >
+                              PD v{pdGroup.pdVersion ?? "—"}
+                            </span>
+                            {isLatest && (
+                              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded uppercase">
+                                Active
+                              </span>
+                            )}
+                            {!isLatest && (
+                              <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded uppercase">
+                                Historical
+                              </span>
+                            )}
+                            <span className="text-[9px] text-stone-400 font-medium">
+                              {courses.length} course{courses.length !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+                          {pdGroup.pdUpdatedAt && (
+                            <p className="text-[10px] text-stone-400 mt-0.5 flex items-center gap-1">
+                              <Clock size={9} /> Updated{" "}
+                              {new Date(pdGroup.pdUpdatedAt).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight
+                        size={16}
+                        className={`text-stone-400 flex-shrink-0 transition-transform ${
+                          isOpen ? "rotate-90" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {isOpen && (
+                      <div className="p-3 space-y-2 bg-white border-t border-stone-100">
+                        {courses.length === 0 ? (
+                          <div className="text-center py-4">
+                            <BookOpen size={20} className="text-stone-200 mx-auto mb-1" />
+                            <p className="text-[11px] text-stone-400">
+                              No courses assigned in this PD version.
+                            </p>
+                          </div>
+                        ) : (
+                          courses.map((c, ci) => {
+                            if (c.isHistoricalSnapshot) {
+                              return (
+                                <div
+                                  key={`${c.courseCode}-${ci}`}
+                                  className="bg-stone-50 border border-dashed border-stone-200 rounded-lg p-3"
+                                >
+                                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                    <span className="font-bold text-stone-600 text-xs">
+                                      {c.courseCode}
+                                    </span>
+                                    <span className="text-[8px] font-bold text-stone-500 bg-stone-200 px-1.5 py-0.5 rounded uppercase">
+                                      {c.type || "Theory"}
+                                    </span>
+                                    <span className="text-[8px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5">
+                                      <History size={8} /> Snapshot
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] font-semibold text-stone-600 truncate">
+                                    {c.courseTitle || "Untitled Course"}
+                                  </p>
+                                  <p className="text-[9px] text-stone-400 mt-0.5">{c.context}</p>
+                                  <p className="text-[9px] text-stone-400 mt-1 italic">
+                                    Managed from latest PD v{pdGroups[0]?.pdVersion ?? "—"}
+                                  </p>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div
+                                key={`${c.courseCode}-${ci}`}
+                                className="bg-white border border-stone-200 rounded-lg p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:border-indigo-300 transition-all shadow-sm"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                    <span className="font-bold text-stone-800 text-xs">
+                                      {c.courseCode}
+                                    </span>
+                                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase">
+                                      {c.type || "Theory"}
+                                    </span>
+                                    {c.cdStatus && c.cdStatus !== "Not Started" && (
+                                      <span
+                                        className={`text-[9px] font-bold border px-1.5 py-0.5 rounded uppercase ${
+                                          c.cdStatus === "Approved"
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                            : c.cdStatus === "UnderReview"
+                                              ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                              : "bg-stone-100 text-stone-600 border-stone-200"
+                                        }`}
+                                      >
+                                        {c.cdStatus}
+                                        {c.cdVersion ? ` (v${c.cdVersion})` : ""}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] font-semibold text-stone-700 truncate">
+                                    {c.courseTitle || "Untitled Course"}
+                                  </p>
+                                  <div className="flex items-center gap-1.5 text-[10px] text-stone-500 mt-1 flex-wrap">
+                                    <span className="truncate max-w-[150px] font-medium">
+                                      {c.programName}
+                                    </span>
+                                    {c.context && (
+                                      <>
+                                        <span>•</span>
+                                        <span>{c.context}</span>
+                                      </>
+                                    )}
+                                    <span>•</span>
+                                    <span className="text-stone-400">
+                                      Assigned by: {c.pdCreatorName || "Admin"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    onLoadAssigned(c);
+                                    onClose();
+                                  }}
+                                  className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold hover:bg-indigo-700 shadow-sm transition-colors flex-shrink-0"
+                                >
+                                  <Plus size={12} />
+                                  {c.cdStatus === "Draft"
+                                    ? "Continue"
+                                    : c.cdStatus === "UnderReview"
+                                      ? "View"
+                                      : c.cdStatus === "Approved"
+                                        ? "Open"
+                                        : "Load Task"}
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <p className="text-[10px] text-stone-400 italic px-1 pt-2">
+                The latest PD version is expanded. Older PD versions are
+                collapsed — expand to inspect. Course Documents always reflect
+                the latest saved version.
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1261,29 +1369,42 @@ const AssignedCDsModal = ({
                   className="bg-white border border-stone-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-indigo-300 transition-all shadow-sm"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className="font-bold text-stone-800">
-                        {c.courseCode}
-                      </span>
+                    <div className="flex items-center gap-3 mb-1 flex-wrap">
+                      <span className="font-bold text-stone-800">{c.courseCode}</span>
                       <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded uppercase">
                         {c.type || "Theory"}
                       </span>
+                      {c.cdStatus && c.cdStatus !== "Not Started" && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                            c.cdStatus === "Approved"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : c.cdStatus === "UnderReview"
+                                ? "bg-yellow-50 text-yellow-700"
+                                : "bg-stone-100 text-stone-600"
+                          }`}
+                        >
+                          {c.cdStatus}
+                          {c.cdVersion ? ` (v${c.cdVersion})` : ""}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-semibold text-gray-700 truncate">
                       {c.courseTitle}
                     </p>
-                    <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        {c.programName}
-                      </span>
+                    <div className="flex items-center gap-2 mt-1 text-xs text-gray-500 flex-wrap">
+                      <span className="font-medium text-gray-700">{c.programName}</span>
                       <span>•</span>
                       <span className="text-gray-400">
-                        Assigned by: {c.pdCreatorName}
+                        Assigned by: {c.pdCreatorName || "Admin"}
                       </span>
                     </div>
                   </div>
                   <button
-                    onClick={() => onLoadAssigned(c)}
+                    onClick={() => {
+                      onLoadAssigned(c);
+                      onClose();
+                    }}
                     className="flex items-center justify-center w-full sm:w-auto gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow-sm transition-colors flex-shrink-0"
                   >
                     <Plus size={14} /> Load Task
@@ -1380,15 +1501,8 @@ const HistoryModal = ({ isOpen, list, search, onSearch, onLoad, onClose }) => {
   );
 };
 
-// ── AI ASSISTANT MODAL (For Rich Text) ──
 const AIAssistantModal = ({
-  isOpen,
-  onClose,
-  fieldName,
-  currentContent,
-  onApply,
-  axios,
-  createrToken,
+  isOpen, onClose, fieldName, currentContent, onApply, axios, createrToken,
 }) => {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1403,27 +1517,14 @@ const AIAssistantModal = ({
   if (!isOpen) return null;
 
   const quickPrompts = [
-    {
-      label: "Fix Grammar",
-      text: "Fix all grammar, spelling, and punctuation errors. Keep the original meaning intact.",
-    },
-    {
-      label: "Make Concise",
-      text: "Remove unnecessary words and make the text concise, clear, and to the point.",
-    },
-    {
-      label: "Academic Tone",
-      text: "Rewrite the text to sound highly professional, academic, and formal.",
-    },
-    {
-      label: "Format as Bullets",
-      text: "Convert the content into clear, well-structured HTML bullet points.",
-    },
+    { label: "Fix Grammar", text: "Fix all grammar, spelling, and punctuation errors. Keep the original meaning intact." },
+    { label: "Make Concise", text: "Remove unnecessary words and make the text concise, clear, and to the point." },
+    { label: "Academic Tone", text: "Rewrite the text to sound highly professional, academic, and formal." },
+    { label: "Format as Bullets", text: "Convert the content into clear, well-structured HTML bullet points." },
   ];
 
   const handleGenerate = async () => {
-    if (!prompt.trim())
-      return toast.error("Please provide instructions for the AI.");
+    if (!prompt.trim()) return toast.error("Please provide instructions for the AI.");
     setLoading(true);
     try {
       const { data } = await axios.post(
@@ -1451,12 +1552,8 @@ const AIAssistantModal = ({
               <Sparkles size={18} className="text-amber-300" />
             </div>
             <div>
-              <h3 className="font-bold text-lg leading-none">
-                AI Content Inspector
-              </h3>
-              <p className="text-indigo-200 text-xs mt-1">
-                Enhancing: {fieldName}
-              </p>
+              <h3 className="font-bold text-lg leading-none">AI Content Inspector</h3>
+              <p className="text-indigo-200 text-xs mt-1">Enhancing: {fieldName}</p>
             </div>
           </div>
           <button
@@ -1470,8 +1567,7 @@ const AIAssistantModal = ({
           <div className="w-full lg:w-1/2 flex flex-col border-r border-gray-200 bg-white">
             <div className="p-5 flex-1 flex flex-col min-h-0">
               <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
-                <FileText size={14} className="text-indigo-500" /> Original
-                Content
+                <FileText size={14} className="text-indigo-500" /> Original Content
               </label>
               <div
                 className="flex-1 overflow-y-auto p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-600 opacity-70 prose prose-sm max-w-none"
@@ -1480,8 +1576,7 @@ const AIAssistantModal = ({
                 }}
               />
               <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mt-5 mb-2">
-                <Wand2 size={14} className="text-indigo-500" /> 1-Click
-                Enhancements
+                <Wand2 size={14} className="text-indigo-500" /> 1-Click Enhancements
               </label>
               <div className="flex flex-wrap gap-2 mb-3">
                 {quickPrompts.map((qp, i) => (
@@ -1529,9 +1624,7 @@ const AIAssistantModal = ({
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 p-8 text-center bg-gray-50/50">
                   <Sparkles size={32} className="text-gray-300 mb-3" />
-                  <p className="text-sm font-medium">
-                    Output will appear here.
-                  </p>
+                  <p className="text-sm font-medium">Output will appear here.</p>
                 </div>
               )}
             </div>
@@ -1560,14 +1653,7 @@ const AIAssistantModal = ({
   );
 };
 
-const AITableModal = ({
-  isOpen,
-  onClose,
-  tableType,
-  onApply,
-  axios,
-  createrToken,
-}) => {
+const AITableModal = ({ isOpen, onClose, tableType, onApply, axios, createrToken }) => {
   const [prompt, setPrompt] = useState("");
   const [rawData, setRawData] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1621,9 +1707,7 @@ const AITableModal = ({
               <h3 className="font-bold text-lg leading-none">
                 {titles[tableType] || "AI Table Parser"}
               </h3>
-              <p className="text-teal-200 text-xs mt-1">
-                Paste raw table data to auto-format.
-              </p>
+              <p className="text-teal-200 text-xs mt-1">Paste raw table data to auto-format.</p>
             </div>
           </div>
           <button
@@ -1637,8 +1721,7 @@ const AITableModal = ({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                <Clipboard size={14} className="text-teal-600" /> 1. Paste Raw
-                Data
+                <Clipboard size={14} className="text-teal-600" /> 1. Paste Raw Data
               </label>
               <textarea
                 className="w-full h-48 p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-teal-500/30 font-mono text-xs resize-none text-gray-700 placeholder:text-gray-300 shadow-sm"
@@ -1653,8 +1736,7 @@ const AITableModal = ({
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                <Wand2 size={14} className="text-teal-600" /> 2. AI Instructions
-                (Optional)
+                <Wand2 size={14} className="text-teal-600" /> 2. AI Instructions (Optional)
               </label>
               <textarea
                 className="w-full h-48 p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-teal-500/30 text-sm resize-none text-gray-700 placeholder:text-gray-300 shadow-sm"
@@ -1699,38 +1781,33 @@ const EditCD = () => {
   const location = useLocation();
   const { axios, createrToken } = useAppContext();
 
-  // ── CORE STATE ─────────────────────────────────────────────────────────
   const [activeStep, setActiveStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
 
-  // Modals & UI States
   const [showSidebar, setShowSidebar] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showAssignedModal, setShowAssignedModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
-  // AI States
   const [aiModalConfig, setAiModalConfig] = useState({
-    isOpen: false,
-    fieldName: "",
-    content: "",
-    applyCallback: null,
+    isOpen: false, fieldName: "", content: "", applyCallback: null,
   });
   const [aiTableConfig, setAiTableConfig] = useState({
-    isOpen: false,
-    tableType: "",
-    applyCallback: null,
+    isOpen: false, tableType: "", applyCallback: null,
   });
   const [enhancingSection, setEnhancingSection] = useState(null);
 
-  // Data
   const [extractedCourses, setExtractedCourses] = useState([]);
   const [recentVersions, setRecentVersions] = useState([]);
   const [cdHistoryList, setCdHistoryList] = useState([]);
   const [historySearch, setHistorySearch] = useState("");
   const [dirtySections, setDirtySections] = useState(new Set());
+
+  const [reuseSources, setReuseSources] = useState([]);
+  const [reuseLoading, setReuseLoading] = useState(false);
+  const [reuseExpanded, setReuseExpanded] = useState(false);
 
   const fileInputRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -1740,6 +1817,7 @@ const EditCD = () => {
   );
   const hasContent = dirtySections.size > 0;
 
+  // ── metaData with pdVersion + pdId fields ──
   const [metaData, setMetaData] = useState({
     courseId: "",
     courseCode: "",
@@ -1749,6 +1827,8 @@ const EditCD = () => {
     status: "Draft",
     isNew: true,
     isLocked: false,
+    pdVersion: null,
+    pdId: null,
   });
   const [cdData, setCdData] = useState(sanitizeCDData({}));
 
@@ -1757,28 +1837,9 @@ const EditCD = () => {
       readonly: false,
       placeholder: "Start typing...",
       buttons: [
-        "bold",
-        "italic",
-        "underline",
-        "|",
-        "ul",
-        "ol",
-        "|",
-        "outdent",
-        "indent",
-        "|",
-        "font",
-        "fontsize",
-        "brush",
-        "paragraph",
-        "|",
-        "table",
-        "link",
-        "|",
-        "align",
-        "undo",
-        "redo",
-        "source",
+        "bold", "italic", "underline", "|", "ul", "ol", "|",
+        "outdent", "indent", "|", "font", "fontsize", "brush", "paragraph", "|",
+        "table", "link", "|", "align", "undo", "redo", "source",
       ],
       height: 260,
       statusbar: false,
@@ -1798,7 +1859,7 @@ const EditCD = () => {
     [cdHistoryList, historySearch],
   );
 
-  // ── LOCAL STORAGE SYNC ──────────────────────────────────
+  // ── LOCAL STORAGE SYNC ──
   useEffect(() => {
     if (!location.state?.loadId) {
       const savedMeta = localStorage.getItem("cd_draft_meta");
@@ -1809,8 +1870,7 @@ const EditCD = () => {
           const parsedMeta = JSON.parse(savedMeta);
           setMetaData({
             ...parsedMeta,
-            isLocked:
-              parsedMeta.isLocked ?? Boolean(parsedMeta.courseCode || ""),
+            isLocked: parsedMeta.isLocked ?? Boolean(parsedMeta.courseCode || ""),
           });
           setCdData(JSON.parse(savedData));
           if (savedDirty) setDirtySections(new Set(JSON.parse(savedDirty)));
@@ -1842,7 +1902,6 @@ const EditCD = () => {
     localStorage.removeItem("cd_draft_dirty");
   };
 
-  // ── EFFECTS ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (sidebarRef.current && !sidebarRef.current.contains(e.target))
@@ -1856,13 +1915,12 @@ const EditCD = () => {
     if (location.state?.loadId) fetchFullCD(location.state.loadId);
   }, [location.state]);
 
-  // ── API CALLS ───────────────────────────────────────────────────────────
+  // ── API CALLS ────────────────────────────────────────────────────────────
   const fetchRecentVersions = async (courseCode) => {
     try {
-      const { data } = await axios.get(
-        `/api/creater/cd/versions/${courseCode}`,
-        { headers: { createrToken } },
-      );
+      const { data } = await axios.get(`/api/creater/cd/versions/${courseCode}`, {
+        headers: { createrToken },
+      });
       if (data.success) setRecentVersions(data.versions);
     } catch (_) {}
   };
@@ -1914,23 +1972,76 @@ const EditCD = () => {
   };
 
   const fetchLatestCD = async () => {
-    if (!metaData.courseCode) return toast.error("Select a course first.");
+    if (!metaData.courseCode) {
+      return toast.error("Select a course first.");
+    }
     setLoading(true);
+    const toastId = toast.loading("Loading latest version…");
     try {
       const { data } = await axios.get(
         `/api/creater/cd/latest/${metaData.courseCode}`,
         { headers: { createrToken } },
       );
-      if (data.success) {
+      if (data.success && data.cd) {
         populateForm(data.cd);
-        toast.success("Loaded latest version.");
-      } else toast.error("No previous versions found.");
-    } catch (_) {
-      toast.error("Failed to load data.");
+        toast.success(`Loaded latest version v${data.cd.cdVersion}`, { id: toastId });
+        return;
+      }
+      if (data.success && !data.cd) {
+        toast(
+          data.message || "No previous versions found. This will be the first version.",
+          { id: toastId, icon: "ℹ️" },
+        );
+        return;
+      }
+      toast.error(data.message || "Could not load latest version.", { id: toastId });
+    } catch (err) {
+      const status = err?.response?.status;
+      const serverMsg = err?.response?.data?.message;
+      if (status === 400) {
+        toast.error(serverMsg || "Invalid course code.", { id: toastId });
+      } else if (status >= 500) {
+        toast.error(serverMsg || "Server error while loading latest version.", { id: toastId });
+      } else {
+        toast.error(serverMsg || "Failed to load latest version.", { id: toastId });
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Load reusable sources for the current course — every prior CD from older PD versions
+  const fetchReuseSources = useCallback(
+    async (courseCode) => {
+      if (!courseCode) return setReuseSources([]);
+      try {
+        setReuseLoading(true);
+        const { data } = await axios.get(
+          `/api/creater/cd/versions/${courseCode}`,
+          { headers: { createrToken } },
+        );
+        if (data.success && Array.isArray(data.versions)) {
+          const filtered = data.versions.filter(
+            (v) =>
+              String(v._id) !== String(metaData.courseId || "") &&
+              String(v.pdVersion || "") !== String(metaData.pdVersion || ""),
+          );
+          setReuseSources(filtered);
+        }
+      } catch {
+        setReuseSources([]);
+      } finally {
+        setReuseLoading(false);
+      }
+    },
+    [axios, createrToken, metaData.courseId, metaData.pdVersion],
+  );
+
+  // Auto-load reuse sources when the course changes
+  useEffect(() => {
+    if (metaData.courseCode) fetchReuseSources(metaData.courseCode);
+    else setReuseSources([]);
+  }, [metaData.courseCode, fetchReuseSources]);
 
   const fetchFullCD = async (cdId) => {
     setLoading(true);
@@ -1953,7 +2064,7 @@ const EditCD = () => {
   const populateForm = (fetchedCd) => {
     const sanitized = sanitizeCDData(transformFetchedToFrontend(fetchedCd));
     setCdData(sanitized);
-    setMetaData({
+    setMetaData((p) => ({
       courseId: fetchedCd.courseCode || "",
       courseCode: fetchedCd.courseCode || "",
       courseTitle: fetchedCd.courseTitle || "",
@@ -1962,7 +2073,10 @@ const EditCD = () => {
       status: fetchedCd.status || "Draft",
       isNew: false,
       isLocked: true,
-    });
+      // ── NEW: preserve PD version binding ──
+      pdVersion: fetchedCd?.pdVersion || p.pdVersion || null,
+      pdId: fetchedCd?.pdId || p.pdId || null,
+    }));
     setDirtySections(new Set());
   };
 
@@ -1981,9 +2095,7 @@ const EditCD = () => {
         timeout: 120000,
       });
       if (data.success) {
-        const arr = Array.isArray(data.parsedData)
-          ? data.parsedData
-          : [data.parsedData];
+        const arr = Array.isArray(data.parsedData) ? data.parsedData : [data.parsedData];
         if (arr.length === 1) loadExtractedCourse(arr[0]);
         else if (arr.length > 1) setExtractedCourses(arr);
         else toast.error("No valid courses found.", { id: toastId });
@@ -2003,8 +2115,6 @@ const EditCD = () => {
 
   const loadExtractedCourse = (obj) => {
     const s = sanitizeCDData(obj);
-
-    // ── Preserve the current Course Code & Title — do NOT let the PDF overwrite them ──
     const preservedCode = metaData.courseCode || cdData.courseCode || "";
     const preservedTitle = metaData.courseTitle || cdData.courseTitle || "";
 
@@ -2020,7 +2130,7 @@ const EditCD = () => {
       courseTitle: preservedTitle,
       programName: s.programTitle || p.programName,
       isNew: true,
-      isLocked: true, // still locked after PDF parse (as before)
+      isLocked: true,
     }));
 
     setDirtySections(new Set(["all"]));
@@ -2091,6 +2201,9 @@ const EditCD = () => {
         sectionsToUpdate: metaData.isNew ? ["all"] : Array.from(dirtySections),
         cdData: transformForSave(cdData),
         reviewerId: reviewerId,
+        // ── NEW: persist PD version binding ──
+        pdVersion: metaData.pdVersion || null,
+        pdId: metaData.pdId || null,
       };
       try {
         const { data } = await axios.post("/api/creater/cd/save", payload, {
@@ -2122,10 +2235,12 @@ const EditCD = () => {
     await handleSave("Draft");
     setActiveStep((p) => Math.min(4, p + 1));
   }, [handleSave]);
+
   const handlePreview = useCallback(() => {
     if (!metaData.courseCode) return toast.error("Select course first.");
     setShowPreviewModal(true);
   }, [metaData.courseCode]);
+
   const handleSubmitReviewClick = useCallback(() => {
     if (!metaData.courseCode) return toast.error("Select course first.");
     setShowReviewModal(true);
@@ -2140,10 +2255,14 @@ const EditCD = () => {
         { headers: { createrToken } },
       );
       if (data.success && data.cd) {
-        toast.success(
-          `Found existing draft for ${course.courseCode}. Resuming work!`,
-        );
+        toast.success(`Found existing draft for ${course.courseCode}. Resuming work!`);
         populateForm(data.cd);
+        // Ensure PD binding carried over from the assignment
+        setMetaData((p) => ({
+          ...p,
+          pdVersion: course.pdVersion || p.pdVersion || null,
+          pdId: course.pdId || p.pdId || null,
+        }));
         fetchRecentVersions(course.courseCode);
       } else {
         setMetaData((p) => ({
@@ -2153,10 +2272,10 @@ const EditCD = () => {
           programName: course.programName,
           isNew: true,
           isLocked: true,
+          // ── NEW: tag the current PD version ──
+          pdVersion: course.pdVersion || null,
+          pdId: course.pdId || null,
         }));
-        // ✅ FIX: use flat cdData shape (matches sanitizeCDData / transformForSave).
-        //    Previously this used `cdData.identity.*` which does not exist,
-        //    causing transformForSave() to send an empty identity.courseCode.
         setCdData((p) => ({
           ...p,
           courseCode: course.courseCode,
@@ -2173,6 +2292,44 @@ const EditCD = () => {
     }
   };
 
+  // ── Clone a previous CD into the current PD version ──
+  const handleReuseSource = useCallback(
+    async (sourceCd) => {
+      if (!metaData.pdVersion) {
+        return toast.error("This course is not bound to a PD version yet.");
+      }
+      const toastId = toast.loading(`Copying v${sourceCd.cdVersion} into current PD…`);
+      try {
+        const { data } = await axios.post(
+          `/api/creater/cd/clone-from/${sourceCd._id}`,
+          {
+            pdVersion: metaData.pdVersion,
+            pdId: metaData.pdId || null,
+            targetCourseCode: metaData.courseCode,
+          },
+          { headers: { createrToken } },
+        );
+        if (!data.success) {
+          toast.error(data.message || "Clone failed.", { id: toastId });
+          return;
+        }
+        toast.success(
+          data.alreadyExists
+            ? "A CD already exists for this version — loading it now."
+            : data.message || "Draft created from source.",
+          { id: toastId },
+        );
+        await fetchFullCD(data.cdId);
+      } catch (err) {
+        toast.error(
+          err?.response?.data?.message || "Failed to clone source CD.",
+          { id: toastId },
+        );
+      }
+    },
+    [axios, createrToken, metaData, fetchFullCD],
+  );
+
   const triggerAIAssistant = (fieldName, content, applyCallback) => {
     setAiModalConfig({ isOpen: true, fieldName, content, applyCallback });
   };
@@ -2180,7 +2337,7 @@ const EditCD = () => {
     setAiTableConfig({ isOpen: true, tableType, applyCallback });
   };
 
-  // ── MUTATION HELPERS ────────────────────────────────────────────────────
+  // ── MUTATION HELPERS ──
   const upd = (field, val) => {
     markDirty("basic");
     setCdData((p) => ({ ...p, [field]: val }));
@@ -2259,6 +2416,89 @@ const EditCD = () => {
         </div>
       </SectionCard>
 
+      {/* ── Reuse Previous Version ── */}
+      {metaData.courseCode && (
+        <SectionCard
+          icon={<History size={16} className="text-violet-500" />}
+          iconBg="bg-violet-50"
+          title="Reuse Previous Version"
+          subtitle={
+            metaData.pdVersion
+              ? `Copy content from an older CD into the current PD v${metaData.pdVersion}.`
+              : "A PD version must be set on this course to reuse content."
+          }
+          action={
+            <button
+              onClick={() => {
+                setReuseExpanded((v) => !v);
+                if (!reuseExpanded && reuseSources.length === 0)
+                  fetchReuseSources(metaData.courseCode);
+              }}
+              className="flex items-center gap-1 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 px-3 py-1.5 rounded-lg hover:bg-violet-100 transition-colors"
+            >
+              {reuseExpanded ? "Hide" : "Show"} sources
+            </button>
+          }
+        >
+          {reuseExpanded && (
+            <div className="space-y-2">
+              {reuseLoading ? (
+                <div className="flex justify-center py-4">
+                  <RefreshCw size={16} className="animate-spin text-gray-400" />
+                </div>
+              ) : reuseSources.length === 0 ? (
+                <p className="text-[11px] text-gray-400 italic px-1">
+                  No previous CDs found for {metaData.courseCode}.
+                </p>
+              ) : (
+                reuseSources.map((src) => (
+                  <div
+                    key={src._id}
+                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-violet-50/40 border border-violet-100 rounded-lg px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                        <span className="text-[10px] font-bold text-violet-700 bg-white border border-violet-200 px-1.5 py-0.5 rounded">
+                          v{src.cdVersion}
+                        </span>
+                        <span
+                          className={`text-[9px] font-bold border px-1.5 py-0.5 rounded uppercase ${
+                            src.status === "Approved"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : src.status === "UnderReview"
+                                ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                : "bg-gray-100 text-gray-600 border-gray-200"
+                          }`}
+                        >
+                          {src.status}
+                        </span>
+                        <span className="text-[9px] text-gray-500 font-medium">
+                          PD v{src.pdVersion || "—"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-gray-500">
+                        {src.createdAt
+                          ? new Date(src.createdAt).toLocaleDateString()
+                          : ""}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleReuseSource(src)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-white bg-violet-600 rounded-lg hover:bg-violet-700 shadow-sm transition-colors flex-shrink-0"
+                    >
+                      <Copy size={11} /> Use as Starting Point
+                    </button>
+                  </div>
+                ))
+              )}
+              <p className="text-[9px] text-gray-400 italic px-1">
+                A new draft is created against the current PD version. The source CD is never modified.
+              </p>
+            </div>
+          )}
+        </SectionCard>
+      )}
+
       <SectionCard
         icon={<FileText size={16} className="text-blue-500" />}
         iconBg="bg-blue-50"
@@ -2312,9 +2552,7 @@ const EditCD = () => {
               key={k}
               className="bg-gray-50 p-3.5 rounded-xl border border-gray-100 text-center"
             >
-              <p className="text-[10px] font-semibold text-gray-400 uppercase mb-2">
-                {k}
-              </p>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase mb-2">{k}</p>
               <OptimizedInput
                 type="number"
                 value={cdData.credits[k]}
@@ -2324,9 +2562,7 @@ const EditCD = () => {
             </div>
           ))}
           <div className="bg-blue-50 p-3.5 rounded-xl border border-blue-100 text-center">
-            <p className="text-[10px] font-semibold text-blue-400 uppercase mb-2">
-              Hours
-            </p>
+            <p className="text-[10px] font-semibold text-blue-400 uppercase mb-2">Hours</p>
             <OptimizedInput
               type="number"
               value={cdData.totalHours}
@@ -2348,14 +2584,10 @@ const EditCD = () => {
         action={
           <button
             onClick={() =>
-              triggerAIAssistant(
-                "Aims & Summary",
-                cdData.aimsSummary,
-                (res) => {
-                  markDirty("basic");
-                  upd("aimsSummary", res);
-                },
-              )
+              triggerAIAssistant("Aims & Summary", cdData.aimsSummary, (res) => {
+                markDirty("basic");
+                upd("aimsSummary", res);
+              })
             }
             className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-200 shadow-sm"
           >
@@ -2368,6 +2600,7 @@ const EditCD = () => {
           onChange={(c) => upd("aimsSummary", c)}
         />
       </SectionCard>
+
       <SectionCard
         icon={<Target size={16} className="text-indigo-500" />}
         iconBg="bg-indigo-50"
@@ -2391,6 +2624,7 @@ const EditCD = () => {
           onChange={(c) => upd("objectives", c)}
         />
       </SectionCard>
+
       <SectionCard
         icon={<Award size={16} className="text-amber-500" />}
         iconBg="bg-amber-50"
@@ -2398,14 +2632,10 @@ const EditCD = () => {
         action={
           <button
             onClick={() =>
-              triggerAIAssistant(
-                "Outcomes",
-                cdData.courseOutcomesHtml,
-                (res) => {
-                  markDirty("courseOutcomes");
-                  upd("courseOutcomesHtml", res);
-                },
-              )
+              triggerAIAssistant("Outcomes", cdData.courseOutcomesHtml, (res) => {
+                markDirty("courseOutcomes");
+                upd("courseOutcomesHtml", res);
+              })
             }
             className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-200 shadow-sm"
           >
@@ -2422,6 +2652,7 @@ const EditCD = () => {
           height={320}
         />
       </SectionCard>
+
       <SectionCard
         icon={<Table size={16} className="text-purple-500" />}
         iconBg="bg-purple-50"
@@ -2442,6 +2673,7 @@ const EditCD = () => {
           }
         />
       </SectionCard>
+
       <SectionCard
         icon={<Layers size={16} className="text-orange-500" />}
         iconBg="bg-orange-50"
@@ -2466,6 +2698,7 @@ const EditCD = () => {
           height={280}
         />
       </SectionCard>
+
       <SectionCard
         icon={<BookOpen size={16} className="text-cyan-500" />}
         iconBg="bg-cyan-50"
@@ -2488,10 +2721,7 @@ const EditCD = () => {
             onChange={(arr) => updRes("references", arr)}
             onOpenAI={() =>
               triggerAITableParser("list", (parsed) =>
-                updRes("references", [
-                  ...cdData.resources.references,
-                  ...parsed,
-                ]),
+                updRes("references", [...cdData.resources.references, ...parsed]),
               )
             }
           />
@@ -2538,8 +2768,7 @@ const EditCD = () => {
               onClick={addTeaching}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 shadow-sm transition-colors"
             >
-              <Plus size={12} strokeWidth={2.5} className="text-pink-500" /> Add
-              Lecture
+              <Plus size={12} strokeWidth={2.5} className="text-pink-500" /> Add Lecture
             </button>
           </div>
         }
@@ -2560,17 +2789,12 @@ const EditCD = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-50">
               {cdData.teaching.map((lec, idx) => (
-                <tr
-                  key={idx}
-                  className="hover:bg-gray-50/60 transition-colors group"
-                >
+                <tr key={idx} className="hover:bg-gray-50/60 transition-colors group">
                   <td className="px-3 py-2">
                     <input
                       type="text"
                       value={lec.number}
-                      onChange={(e) =>
-                        updTeaching(idx, "number", e.target.value)
-                      }
+                      onChange={(e) => updTeaching(idx, "number", e.target.value)}
                       className="w-12 px-2 py-1.5 border rounded-lg text-center bg-gray-50"
                     />
                   </td>
@@ -2578,9 +2802,7 @@ const EditCD = () => {
                     <input
                       type="text"
                       value={lec.topic}
-                      onChange={(e) =>
-                        updTeaching(idx, "topic", e.target.value)
-                      }
+                      onChange={(e) => updTeaching(idx, "topic", e.target.value)}
                       className="w-full px-3 py-1.5 border rounded-lg"
                     />
                   </td>
@@ -2588,9 +2810,7 @@ const EditCD = () => {
                     <input
                       type="text"
                       value={lec.slides}
-                      onChange={(e) =>
-                        updTeaching(idx, "slides", e.target.value)
-                      }
+                      onChange={(e) => updTeaching(idx, "slides", e.target.value)}
                       className="w-28 px-3 py-1.5 border rounded-lg"
                     />
                   </td>
@@ -2598,9 +2818,7 @@ const EditCD = () => {
                     <input
                       type="text"
                       value={lec.videos}
-                      onChange={(e) =>
-                        updTeaching(idx, "videos", e.target.value)
-                      }
+                      onChange={(e) => updTeaching(idx, "videos", e.target.value)}
                       className="w-28 px-3 py-1.5 border rounded-lg"
                     />
                   </td>
@@ -2616,14 +2834,8 @@ const EditCD = () => {
               ))}
               {cdData.teaching.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="px-4 py-10 text-center text-xs text-gray-400"
-                  >
-                    <BookMarked
-                      size={24}
-                      className="text-gray-200 mx-auto mb-2"
-                    />
+                  <td colSpan={5} className="px-4 py-10 text-center text-xs text-gray-400">
+                    <BookMarked size={24} className="text-gray-200 mx-auto mb-2" />
                     No lectures yet. Click "Add Lecture" above.
                   </td>
                 </tr>
@@ -2632,6 +2844,7 @@ const EditCD = () => {
           </table>
         </div>
       </SectionCard>
+
       <SectionCard
         icon={<BarChart3 size={16} className="text-teal-500" />}
         iconBg="bg-teal-50"
@@ -2652,6 +2865,7 @@ const EditCD = () => {
           }
         />
       </SectionCard>
+
       <SectionCard
         icon={<Award size={16} className="text-rose-500" />}
         iconBg="bg-rose-50"
@@ -2679,6 +2893,7 @@ const EditCD = () => {
           height={200}
         />
       </SectionCard>
+
       <SectionCard
         icon={<TrendingUp size={16} className="text-gray-400" />}
         iconBg="bg-gray-100"
@@ -2742,6 +2957,7 @@ const EditCD = () => {
           }}
         />
       </SectionCard>
+
       <SectionCard
         icon={<Shield size={16} className="text-emerald-500" />}
         iconBg="bg-emerald-50"
@@ -2809,10 +3025,7 @@ const EditCD = () => {
       />
 
       {showSidebar && (
-        <div
-          className="fixed inset-0 z-40 lg:hidden"
-          onClick={() => setShowSidebar(false)}
-        >
+        <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setShowSidebar(false)}>
           <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
         </div>
       )}
@@ -2847,17 +3060,14 @@ const EditCD = () => {
                   className={`w-full flex items-center gap-3 p-2.5 rounded-lg text-left ${activeStep === step.id ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-600"}`}
                 >
                   <step.icon size={14} />
-                  <span className="text-xs font-medium truncate">
-                    {step.label}
-                  </span>
+                  <span className="text-xs font-medium truncate">{step.label}</span>
                 </button>
               ))}
             </div>
           </div>
           <div className="p-4 flex-1 overflow-y-auto">
             <div className="flex items-center gap-2 mb-3 text-gray-400 uppercase text-[10px] font-bold tracking-widest">
-              <History size={14} />
-              Version History
+              <History size={14} /> Version History
             </div>
             {recentVersions.map((ver) => (
               <div
@@ -2889,12 +3099,15 @@ const EditCD = () => {
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-5">
           <div className="flex items-center gap-2">
             <GraduationCap className="text-gray-400" />
-            <h1 className="text-lg font-black text-stone-800">
-              Course Document Editor
-            </h1>
+            <h1 className="text-lg font-black text-stone-800">Course Document Editor</h1>
             {metaData.courseCode && (
               <span className="bg-stone-100 border border-stone-200 text-stone-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
                 {metaData.courseCode}
+              </span>
+            )}
+            {metaData.pdVersion && (
+              <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                PD v{metaData.pdVersion}
               </span>
             )}
           </div>
@@ -2916,12 +3129,7 @@ const EditCD = () => {
               disabled={!metaData.courseCode}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-40"
             >
-              {loading ? (
-                <RefreshCw size={14} className="animate-spin" />
-              ) : (
-                <RefreshCw size={14} />
-              )}{" "}
-              Latest
+              {loading ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />} Latest
             </button>
             <button
               onClick={handlePreview}
@@ -2934,12 +3142,7 @@ const EditCD = () => {
               disabled={loading || !metaData.courseCode}
               className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-all shadow-md"
             >
-              {loading ? (
-                <RefreshCw size={14} className="animate-spin" />
-              ) : (
-                <Save size={14} />
-              )}{" "}
-              Save Draft
+              {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Save Draft
             </button>
             <button
               onClick={handleSubmitReviewClick}
@@ -2950,23 +3153,27 @@ const EditCD = () => {
             </button>
           </div>
         </div>
+
         <StepProgressBar
           activeStep={activeStep}
           onStepClick={setActiveStep}
           completions={stepCompletions}
         />
+
         {hasContent && (
           <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-amber-100 bg-amber-50/50 text-[11px] text-amber-700 font-bold mb-5 mt-4">
             <AlertTriangle size={14} />
             Unsaved local changes detected in section snapshots.
           </div>
         )}
+
         <div className="mt-5">
           {activeStep === 1 && renderStep1()}
           {activeStep === 2 && renderStep2()}
           {activeStep === 3 && renderStep3()}
           {activeStep === 4 && renderStep4()}
         </div>
+
         <div className="mt-8 flex justify-between bg-white border p-4 rounded-2xl shadow-sm">
           <button
             onClick={() => setActiveStep((p) => Math.max(1, p - 1))}
@@ -2976,13 +3183,6 @@ const EditCD = () => {
             <ArrowLeft size={16} /> Previous
           </button>
           <div className="flex items-center gap-2">
-            {/* <button
-              onClick={handleSaveAndNext}
-              disabled={loading || !metaData.courseCode}
-              className="px-4 py-2 text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl hover:bg-emerald-100 transition-all"
-            >
-              Save & Next
-            </button> */}
             <button
               onClick={() => setActiveStep((p) => Math.min(4, p + 1))}
               disabled={activeStep === 4}

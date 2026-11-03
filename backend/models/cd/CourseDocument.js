@@ -55,10 +55,22 @@
       },
       approvedBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
+        ref: "Admin",
         default: null,
       },
       approvalDate: { type: Date },
+
+      pdVersion: { type: String, default: null },       // e.g. "1.0.1" — the PD version this CD was drafted against
+pdId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "PD",
+  default: null,
+},
+clonedFrom: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "CourseDocument",
+  default: null,
+},
     },
     { timestamps: true },
   );
