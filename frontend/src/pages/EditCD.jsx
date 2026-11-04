@@ -98,6 +98,31 @@ const DK = {
   feedback: "feedback", otherDetails: "otherDetails",
 };
 
+// Friendly labels for the "unsaved changes" banner
+const SECTION_LABELS = {
+  [DK.identity]: "Course Identity",
+  [DK.credits]: "Course Size / Credits",
+  [DK.basic]: "Aims & Objectives",
+  [DK.courseOutcomes]: "Course Outcomes",
+  [DK.outcomeMap]: "CO–PO/PSO Mapping",
+  [DK.courseContent]: "Course Content",
+  [DK.resources]: "Course Resources",
+  [DK.onlineResources]: "Online Resources",
+  [DK.teaching]: "Lesson Plan",
+  [DK.assessmentWeight]: "Assessment Weight",
+  [DK.scheduleOfAssessments]: "Schedule of Assessments",
+  [DK.passingCriterion]: "Passing Criterion",
+  [DK.gradingCriterion]: "Grading Criterion",
+  [DK.attainmentTargets]: "Attainment Targets",
+  [DK.performanceRecording]: "Performance Recording",
+  [DK.performanceRecordingHtml]: "Performance Recording HTML",
+  [DK.cabAnalysis]: "CAB Analysis",
+  [DK.coAttainmentMapping]: "CO Attainment Mapping",
+  [DK.feedback]: "Feedback",
+  [DK.otherDetails]: "Other Details",
+  all: "All sections",
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -196,6 +221,13 @@ const sanitizeMatrix = (raw) => {
   if (!valid) return buildDefaultMatrix();
   const w = Math.max(...m.map((r) => r.length));
   return m.map((r) => [...r, ...Array(w - r.length).fill("")]);
+};
+
+// Accepts either a raw matrix array OR { matrix: [...] } wrapper
+const sanitizeMatrixInput = (raw) => {
+  if (Array.isArray(raw)) return sanitizeMatrix(raw);
+  if (raw && typeof raw === "object" && Array.isArray(raw.matrix)) return sanitizeMatrix(raw.matrix);
+  return buildDefaultMatrix();
 };
 
 const sanitizeCourseOutcomes = (raw) =>
@@ -311,6 +343,22 @@ const sanitizeOnline = (raw) =>
 
 const sanitizeList = (raw) => (Array.isArray(raw) ? raw.map(toStr) : []);
 
+const sanitizeHtmlFlags = (raw) => {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const out = {};
+  Object.keys(r).forEach((k) => { if (r[k]) out[k] = true; });
+  return out;
+};
+
+const sanitizeHtmlModes = (raw) => {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const out = {};
+  Object.keys(r).forEach((k) => {
+    if (r[k] === "html" || r[k] === "table") out[k] = r[k];
+  });
+  return out;
+};
+
 const sanitizeCDData = (raw = {}) => {
   const src = raw && typeof raw === "object" ? raw : {};
   const idn = src.identity && typeof src.identity === "object" ? src.identity : {};
@@ -329,6 +377,10 @@ const sanitizeCDData = (raw = {}) => {
   const res = src.resources && typeof src.resources === "object" ? src.resources : {};
   const other = src.otherDetails && typeof src.otherDetails === "object" ? src.otherDetails : {};
 
+  // Accept both `outcomeMap: [...]` and `outcomeMap: { matrix: [...] }`
+  const outcomeMapRaw = src.outcomeMap;
+  const coMapRaw = src.coAttainmentMapping;
+
   return {
     ...out,
     totalHours: toNum(src.totalHours ?? idn.totalHours),
@@ -337,7 +389,7 @@ const sanitizeCDData = (raw = {}) => {
     objectives: cleanText(src.objectives),
     courseOutcomes: sanitizeCourseOutcomes(outcomesSource),
     courseOutcomesHtml: toStr(src.courseOutcomesHtml),
-    outcomeMap: { matrix: sanitizeMatrix(src.outcomeMap?.matrix) },
+    outcomeMap: { matrix: sanitizeMatrixInput(outcomeMapRaw?.matrix ?? outcomeMapRaw) },
     outcomeMapHtml: toStr(src.outcomeMapHtml),
     courseContent: cleanText(src.courseContent || src.modules),
     resources: {
@@ -359,7 +411,7 @@ const sanitizeCDData = (raw = {}) => {
     performanceRecording: sanitizePerformance(src.performanceRecording),
     performanceRecordingHtml: toStr(src.performanceRecordingHtml),
     cabAnalysis: sanitizeCab(src.cabAnalysis),
-    coAttainmentMapping: sanitizeMatrix(src.coAttainmentMapping),
+    coAttainmentMapping: sanitizeMatrixInput(coMapRaw?.matrix ?? coMapRaw),
     coAttainmentMappingHtml: toStr(src.coAttainmentMappingHtml),
     feedback: sanitizeFeedback(src.feedback),
     feedbackHtml: toStr(src.feedbackHtml),
@@ -367,6 +419,8 @@ const sanitizeCDData = (raw = {}) => {
       assignmentDetails: cleanText(other.assignmentDetails),
       academicIntegrity: cleanText(other.academicIntegrity),
     },
+    htmlFlags: sanitizeHtmlFlags(src.htmlFlags),
+    htmlModes: sanitizeHtmlModes(src.htmlModes),
   };
 };
 
@@ -400,6 +454,8 @@ const transformForSave = (cd) => ({
   feedback: cd.feedback,
   feedbackHtml: cd.feedbackHtml,
   otherDetails: cd.otherDetails,
+  htmlFlags: cd.htmlFlags,
+  htmlModes: cd.htmlModes,
 });
 
 const transformFetchedToFrontend = (fetched = {}) => {
@@ -588,6 +644,10 @@ const parsePerformancePaste = (raw, current) => {
 const INPUT_BASE =
   "w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150 disabled:bg-stone-100 disabled:text-stone-500 disabled:cursor-not-allowed read-only:bg-gray-50 read-only:text-gray-600";
 
+/**
+ * Debounced input that flushes pending value on unmount so that switching
+ * sections right after pasting/typing never loses data.
+ */
 const OptimizedInput = ({ value, onChange, debounceTime = 350, className = "", multiline = false, ...rest }) => {
   const [local, setLocal] = useState(toStr(value));
   const localRef = useRef(local);
@@ -595,6 +655,8 @@ const OptimizedInput = ({ value, onChange, debounceTime = 350, className = "", m
   const timer = useRef(null);
   const cbRef = useRef(onChange);
   cbRef.current = onChange;
+  const valueRef = useRef(value);
+  valueRef.current = value;
   const isNumber = rest.type === "number";
 
   useEffect(() => {
@@ -603,20 +665,34 @@ const OptimizedInput = ({ value, onChange, debounceTime = 350, className = "", m
     if (isNumber && cur === "" && toNum(value) === 0) return;
     clearTimeout(timer.current);
     setLocal(toStr(value));
+    localRef.current = toStr(value);
   }, [value, isNumber]);
 
-  useEffect(() => () => clearTimeout(timer.current), []);
+  // FLUSH pending edits on unmount so section switches never lose data
+  useEffect(() => {
+    return () => {
+      clearTimeout(timer.current);
+      const cur = localRef.current;
+      const orig = toStr(valueRef.current);
+      const changed = isNumber ? toNum(cur) !== toNum(valueRef.current) : cur !== orig;
+      if (changed) cbRef.current(cur);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleChange = (e) => {
     const v = e.target.value;
     setLocal(v);
+    localRef.current = v;
     clearTimeout(timer.current);
     timer.current = setTimeout(() => cbRef.current(v), debounceTime);
   };
   const handleBlur = (e) => {
     clearTimeout(timer.current);
     const v = e.target.value;
-    if (isNumber ? toNum(v) !== toNum(value) : v !== toStr(value)) cbRef.current(v);
+    if (isNumber ? toNum(v) !== toNum(valueRef.current) : v !== toStr(valueRef.current)) {
+      cbRef.current(v);
+    }
   };
 
   const Tag = multiline ? "textarea" : "input";
@@ -637,7 +713,38 @@ const JODIT_BUTTONS = [
   "align", "undo", "redo", "|", "source",
 ];
 
+/**
+ * Rich text editor with debounced onChange AND unmount flush — prevents
+ * pasted HTML from being lost when the user switches sections before blur.
+ */
 const RichTextEditor = ({ value, onChange, placeholder, height = 220 }) => {
+  const timer = useRef(null);
+  const latest = useRef(toStr(value));
+  const valueRef = useRef(toStr(value));
+  const cbRef = useRef(onChange);
+  cbRef.current = onChange;
+
+  useEffect(() => {
+    valueRef.current = toStr(value);
+    latest.current = toStr(value);
+  }, [value]);
+
+  // FLUSH on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(timer.current);
+      if (latest.current !== valueRef.current) cbRef.current(latest.current);
+    };
+  }, []);
+
+  const handleEditorChange = (c) => {
+    latest.current = toStr(c);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      if (latest.current !== valueRef.current) cbRef.current(latest.current);
+    }, 400);
+  };
+
   const config = useMemo(
     () => ({
       readonly: false,
@@ -653,12 +760,17 @@ const RichTextEditor = ({ value, onChange, placeholder, height = 220 }) => {
     }),
     [placeholder, height],
   );
+
   return (
     <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-400 transition-all">
       <JoditEditor
         value={value || ""}
         config={config}
-        onBlur={(c) => { if (typeof c === "string" && c !== (value || "")) onChange(c); }}
+        onChange={handleEditorChange}
+        onBlur={(c) => {
+          clearTimeout(timer.current);
+          if (typeof c === "string" && c !== valueRef.current) cbRef.current(c);
+        }}
       />
     </div>
   );
@@ -840,27 +952,40 @@ const PasteModal = ({ title, description, placeholder, onClose, onConfirm }) => 
   );
 };
 
+/**
+ * Structured section: table ↔ HTML with robust persistence.
+ *
+ * Key fix: the `initialized` ref ensures we NEVER overwrite non-empty HTML on
+ * first mount (which happens every time the user switches steps). Persisted
+ * `htmlFlags[sectionKey]` remembers if the user has manually edited the HTML.
+ */
 const StructuredSection = ({
   icon, iconBg, title, subtitle, hasData, hasHtml = true,
   htmlValue, onHtmlChange, buildHtml, onAIParse, pasteInfo,
   onPasteConfirm, onPolish, isPolishing, toolbarLeft, children,
+  sectionKey, htmlFlags, htmlModes, onFlagChange, onModeChange,
 }) => {
-  const [mode, setMode] = useState(hasHtml ? "html" : "table");
+  const defaultMode = hasHtml ? "html" : "table";
+  const mode = (sectionKey && htmlModes?.[sectionKey]) || defaultMode;
+  const userEditedHtml = Boolean(sectionKey && htmlFlags?.[sectionKey]);
+  const setMode = (m) => sectionKey && onModeChange && onModeChange(sectionKey, m);
+  const setUserEditedHtml = (b) => sectionKey && onFlagChange && onFlagChange(sectionKey, b);
+
   const [showPaste, setShowPaste] = useState(false);
-  const [userEditedHtml, setUserEditedHtml] = useState(false);
   const htmlFilled = hasText(htmlValue);
   const buildRef = useRef(buildHtml);
   buildRef.current = buildHtml;
+  const initialized = useRef(false);
 
+  // Auto-sync table → HTML. On FIRST mount we only build if HTML is empty —
+  // this prevents saved/pasted HTML from being overwritten after a section switch.
   useEffect(() => {
-    if (hasHtml && !htmlFilled && hasData && buildHtml) {
-      onHtmlChange(buildHtml());
+    if (!hasHtml || !hasData) return;
+    if (!initialized.current) {
+      initialized.current = true;
+      if (htmlFilled) return; // don't overwrite existing HTML on mount
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasData]);
-
-  useEffect(() => {
-    if (!hasHtml || !hasData || userEditedHtml) return;
+    if (userEditedHtml) return;
     const html = buildRef.current?.();
     if (html && html !== htmlValue) onHtmlChange(html);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -889,14 +1014,20 @@ const StructuredSection = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-gray-500 flex items-center gap-1.5">
               <Info size={12} className="text-blue-500" />
-              Auto-synced from the table. Edit to override; click Regenerate to resync.
+              {userEditedHtml
+                ? "You have edited this HTML manually. Click Regenerate to resync from the table."
+                : "Auto-synced from the table. Edit to override."}
             </p>
             <div className="flex gap-2 flex-wrap">
               <SmallButton onClick={generate} icon={<Copy size={12} />}>
                 Regenerate from table
               </SmallButton>
               {htmlFilled && (
-                <SmallButton tone="rose" onClick={() => { onHtmlChange(""); setUserEditedHtml(false); }} icon={<Trash2 size={12} />}>
+                <SmallButton
+                  tone="rose"
+                  onClick={() => { onHtmlChange(""); setUserEditedHtml(false); }}
+                  icon={<Trash2 size={12} />}
+                >
                   Clear
                 </SmallButton>
               )}
@@ -1210,10 +1341,6 @@ const ScheduleSection = ({ schedule, onSchedule, ...shell }) => {
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PERFORMANCE SECTION (NOW SUPPORTS HTML TOGGLE)
-// ─────────────────────────────────────────────────────────────────────────────
-
 const PerformanceSection = ({ value, onChange, ...shell }) => {
   const g = value.gradeDistribution || {};
   const sum = GRADE_KEYS.reduce((s, k) => s + toNum(g[k.key]), 0);
@@ -1274,7 +1401,6 @@ const PerformanceSection = ({ value, onChange, ...shell }) => {
 // CHARTS (2.7) — STATIC & HARDCODED TO MATCH PDF
 // ═══════════════════════════════════════════════════════════════════════════
 const GradeDistributionChart = ({ value = {} }) => {
-  // Extract values dynamically, with fallbacks to 0
   const grades = [
     { id: 1, label: "D", count: Number(value.d || value.D || 4) },
     { id: 2, label: "C", count: Number(value.c || value.C || 8) },
@@ -1284,39 +1410,27 @@ const GradeDistributionChart = ({ value = {} }) => {
     { id: 6, label: "A+", count: Number(value.aPlus || value["A+"] || 10) },
     { id: 7, label: "O", count: Number(value.o || value.O || 4) },
   ];
-
-  // Calculate dynamic Y-axis steps based on the highest value
-  const maxCount = Math.max(...grades.map((g) => g.count), 16); 
+  const maxCount = Math.max(...grades.map((g) => g.count), 16);
   const yAxisSteps = [maxCount, maxCount * 0.8, maxCount * 0.6, maxCount * 0.4, maxCount * 0.2, 0];
 
   return (
     <div className="border border-gray-300 p-4 bg-white flex flex-col items-center shadow-sm font-sans">
       <h3 className="text-base text-gray-600 mb-6 font-medium">Distribution of Grades</h3>
-      
-      {/* Chart Area */}
       <div className="relative w-full h-48 flex mb-1">
-        {/* Y Axis labels */}
         <div className="flex flex-col justify-between items-end pr-2 text-xs text-gray-500 w-8 z-10">
           {yAxisSteps.map((step, idx) => (
             <span key={idx} className="bg-white/80 leading-none">{Math.round(step)}</span>
           ))}
         </div>
-        
-        {/* Y Axis Title rotated */}
         <div className="absolute -left-6 top-1/2 -translate-y-1/2 -rotate-90 text-xs text-gray-600 whitespace-nowrap tracking-wide">
           Number of Students
         </div>
-        
-        {/* Grid & Bars */}
         <div className="relative flex-1 border-l border-gray-400 flex items-end justify-around">
-          {/* Horizontal Grid lines */}
           <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
             {yAxisSteps.map((_, i) => (
               <div key={i} className="w-full border-t border-gray-300"></div>
             ))}
           </div>
-          
-          {/* Bars */}
           {grades.map((g) => (
             <div key={g.id} className="relative z-10 flex flex-col items-center justify-end w-full group h-full">
               {g.count > 0 && <span className="text-xs text-gray-600 mb-1">{g.label}</span>}
@@ -1328,8 +1442,6 @@ const GradeDistributionChart = ({ value = {} }) => {
           ))}
         </div>
       </div>
-      
-      {/* Attached Data Table matching the screenshot */}
       <div className="w-full pl-8 flex flex-col text-xs text-gray-500 border-t border-gray-300">
         <div className="flex border-b border-x border-gray-300">
           <div className="w-16 border-r border-gray-300 flex items-center justify-center bg-white"></div>
@@ -1359,12 +1471,9 @@ const GradeDistributionChart = ({ value = {} }) => {
 };
 
 const COAttainmentChart = ({ targets = [] }) => {
-  // Grab attainment from the first CO or fallback to default
   const targetData = targets[0] || {};
-  const attainedPercentage = targetData.aAttained || 75; 
+  const attainedPercentage = targetData.aAttained || 75;
   const title = `CO-1 Distribution-${attainedPercentage}% students above 70%`;
-
-  // Map dynamic band data based on the screenshot's representation
   const bands = [
     { id: 1, label: "0", count: Number(targetData.band1 || 0) },
     { id: 2, label: "0", count: Number(targetData.band2 || 0) },
@@ -1374,7 +1483,6 @@ const COAttainmentChart = ({ targets = [] }) => {
     { id: 6, label: "A+", count: Number(targetData.band6 || 20) },
     { id: 7, label: "O", count: Number(targetData.band7 || 6) },
   ];
-
   const maxCount = Math.max(...bands.map((b) => b.count), 25);
   const yAxisSteps = [maxCount, maxCount * 0.8, maxCount * 0.6, maxCount * 0.4, maxCount * 0.2, 0];
 
@@ -1382,26 +1490,18 @@ const COAttainmentChart = ({ targets = [] }) => {
     <div className="flex justify-center items-start pt-2">
       <div className="border border-gray-200 p-2 bg-white flex flex-col items-center justify-center shadow-sm w-full max-w-sm font-sans">
         <h3 className="text-[10px] text-center text-gray-500 mb-3">{title}</h3>
-        
-        {/* Chart Area */}
         <div className="relative w-full h-40 flex mb-4">
-          {/* Y Axis labels */}
           <div className="flex flex-col justify-between items-end pr-1 text-[8px] text-gray-400 w-5">
             {yAxisSteps.map((step, idx) => (
               <span key={idx} className="leading-none">{Math.round(step)}</span>
             ))}
           </div>
-          
-          {/* Grid & Bars */}
           <div className="relative flex-1 border-l border-b border-gray-300 flex items-end justify-around pl-1">
-            {/* Horizontal Grid lines */}
             <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
               {yAxisSteps.map((_, i) => (
                 <div key={i} className="w-full border-t border-gray-100"></div>
               ))}
             </div>
-            
-            {/* Bars */}
             {bands.map((b, i) => (
               <div key={b.id} className="relative z-10 flex flex-col items-center justify-end w-full group h-full">
                 {b.count > 0 && <span className="text-[8px] text-gray-500 mb-[2px]">{b.label}</span>}
@@ -1409,7 +1509,6 @@ const COAttainmentChart = ({ targets = [] }) => {
                   className="w-3 bg-[#4472c4] transition-all duration-300"
                   style={{ height: `${(b.count / maxCount) * 100}%` }}
                 ></div>
-                {/* X Axis index labels */}
                 <span className="absolute -bottom-4 text-[8px] text-gray-400">{i + 1}</span>
               </div>
             ))}
@@ -2341,7 +2440,7 @@ const EditCD = () => {
         setCdData(sanitizeCDData(JSON.parse(savedData)));
         if (savedDirty) setDirtySections(new Set(JSON.parse(savedDirty)));
         setDocKey((k) => k + 1);
-        toast("Restored unsaved draft", { icon: "💾" });
+        toast("Restored unsaved draft from local storage", { icon: "💾" });
       }
     } catch {
       clearLocalStorage();
@@ -2349,6 +2448,7 @@ const EditCD = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadId]);
 
+  // Persist draft to localStorage (debounced) whenever meta/data/dirty changes
   useEffect(() => {
     if (dirtySections.size === 0 || !metaData.courseCode) return;
     const t = setTimeout(() => {
@@ -2357,9 +2457,20 @@ const EditCD = () => {
         localStorage.setItem(DRAFT_KEYS.data, JSON.stringify(cdData));
         localStorage.setItem(DRAFT_KEYS.dirty, JSON.stringify(Array.from(dirtySections)));
       } catch {}
-    }, 1000);
+    }, 500);
     return () => clearTimeout(t);
   }, [metaData, cdData, dirtySections]);
+
+  // Warn before leaving with unsaved changes
+  useEffect(() => {
+    if (!hasContent) return;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasContent]);
 
   useEffect(() => {
     if (!showSidebar) return;
@@ -2635,6 +2746,20 @@ const EditCD = () => {
     setCdData((p) => ({ ...p, [parent]: { ...p[parent], [field]: val } }));
   };
 
+  // Persist "user edited HTML" flag per section (survives remount)
+  const setHtmlFlag = useCallback((key, val) => {
+    setCdData((p) => {
+      const flags = { ...(p.htmlFlags || {}) };
+      if (val) flags[key] = true; else delete flags[key];
+      return { ...p, htmlFlags: flags };
+    });
+  }, []);
+
+  // Persist preferred mode (html/table) per section
+  const setHtmlMode = useCallback((key, mode) => {
+    setCdData((p) => ({ ...p, htmlModes: { ...(p.htmlModes || {}), [key]: mode } }));
+  }, []);
+
   const applyParsed = (field, sanitizeFn, section, isUsable) => (parsed) => {
     const value = sanitizeFn(parsed);
     if (isUsable && !isUsable(value)) return toast.error("AI returned no usable data.");
@@ -2669,6 +2794,14 @@ const EditCD = () => {
       isPolishing={enhancingSection === title}
     />
   );
+
+  // Shared shell props for every StructuredSection
+  const htmlShell = {
+    htmlFlags: cdData.htmlFlags,
+    htmlModes: cdData.htmlModes,
+    onFlagChange: setHtmlFlag,
+    onModeChange: setHtmlMode,
+  };
 
   const coColumns = [
     { key: "code", label: "COs", minW: 70 },
@@ -2851,6 +2984,8 @@ const EditCD = () => {
       {richCard({ icon: <Target size={16} className="text-indigo-500" />, iconBg: "bg-indigo-50", title: "1.3 Course Objectives", field: "objectives", section: DK.basic, fieldName: "Objectives" })}
 
       <TableSection
+        {...htmlShell}
+        sectionKey={DK.courseOutcomes}
         icon={<Award size={16} className="text-amber-500" />}
         iconBg="bg-amber-50"
         title="1.4 Course Outcomes (COs)"
@@ -2880,6 +3015,8 @@ const EditCD = () => {
       />
 
       <MatrixSection
+        {...htmlShell}
+        sectionKey={DK.outcomeMap}
         icon={<Table size={16} className="text-purple-500" />}
         iconBg="bg-purple-50"
         title="1.5 COs to POs & PSOs Mapping"
@@ -2892,7 +3029,7 @@ const EditCD = () => {
         onAIParse={() =>
           triggerAITableParser("outcomeMap", (parsed) => {
             if (!Array.isArray(parsed) || !Array.isArray(parsed[0])) return toast.error("AI returned no usable data.");
-            const m = sanitizeMatrix(parsed);
+            const m = sanitizeMatrixInput(parsed);
             markDirty(DK.outcomeMap);
             setCdData((p) => ({ ...p, outcomeMap: { ...p.outcomeMap, matrix: m } }));
             toast.success("Parsed successfully!");
@@ -2961,6 +3098,8 @@ const EditCD = () => {
       </SectionCard>
 
       <TableSection
+        {...htmlShell}
+        sectionKey={DK.onlineResources}
         icon={<Link2 size={16} className="text-sky-500" />}
         iconBg="bg-sky-50"
         title="Online Resources"
@@ -2988,6 +3127,8 @@ const EditCD = () => {
   const renderStep3 = () => (
     <div className="space-y-5">
       <TableSection
+        {...htmlShell}
+        sectionKey={DK.teaching}
         icon={<BookMarked size={16} className="text-pink-500" />}
         iconBg="bg-pink-50"
         title="2.1 Lesson Plan"
@@ -3028,6 +3169,8 @@ const EditCD = () => {
       />
 
       <TableSection
+        {...htmlShell}
+        sectionKey={DK.assessmentWeight}
         icon={<BarChart3 size={16} className="text-teal-500" />}
         iconBg="bg-teal-50"
         title="2.2 Assessment Weight Distribution"
@@ -3081,6 +3224,8 @@ const EditCD = () => {
       />
 
       <ScheduleSection
+        {...htmlShell}
+        sectionKey={DK.scheduleOfAssessments}
         icon={<Calendar size={16} className="text-blue-500" />}
         iconBg="bg-blue-50"
         title="2.3 Schedule of Assessments"
@@ -3127,6 +3272,8 @@ const EditCD = () => {
   const renderStep4 = () => (
     <div className="space-y-5">
       <AttainmentSection
+        {...htmlShell}
+        sectionKey={DK.attainmentTargets}
         icon={<Target size={16} className="text-indigo-500" />}
         iconBg="bg-indigo-50"
         title="2.5 Setting Attainment Targets"
@@ -3159,6 +3306,8 @@ const EditCD = () => {
       />
 
       <PerformanceSection
+        {...htmlShell}
+        sectionKey={DK.performanceRecording}
         icon={<ClipboardList size={16} className="text-emerald-500" />}
         iconBg="bg-emerald-50"
         title="2.6 Performance Recording"
@@ -3237,6 +3386,8 @@ const EditCD = () => {
       />
 
       <MatrixSection
+        {...htmlShell}
+        sectionKey={DK.coAttainmentMapping}
         icon={<Table size={16} className="text-purple-500" />}
         iconBg="bg-purple-50"
         title="2.9 Mapping of CO Attained Values with Program Outcomes"
@@ -3249,7 +3400,7 @@ const EditCD = () => {
         onAIParse={() =>
           triggerAITableParser("coAttainmentMapping", (parsed) => {
             if (!Array.isArray(parsed) || !Array.isArray(parsed[0])) return toast.error("AI returned no usable data.");
-            setField("coAttainmentMapping", sanitizeMatrix(parsed), DK.coAttainmentMapping);
+            setField("coAttainmentMapping", sanitizeMatrixInput(parsed), DK.coAttainmentMapping);
             toast.success("Parsed successfully!");
           })
         }
@@ -3270,6 +3421,8 @@ const EditCD = () => {
       />
 
       <TableSection
+        {...htmlShell}
+        sectionKey={DK.feedback}
         icon={<MessageSquare size={16} className="text-rose-500" />}
         iconBg="bg-rose-50"
         title="2.10 Feedback to Faculty Member"
@@ -3331,6 +3484,11 @@ const EditCD = () => {
     metaData.status === "Approved" || metaData.status === "UnderReview"
       ? `This document is ${metaData.status === "Approved" ? "Approved" : "Under Review"}. Saving will create a new version.`
       : "";
+
+  // Friendly display of dirty section names
+  const dirtyLabels = Array.from(dirtySections)
+    .map((k) => SECTION_LABELS[k] || k)
+    .join(", ");
 
   return (
     <CreatorLayout>
@@ -3483,8 +3641,14 @@ const EditCD = () => {
             </div>
           )}
           {hasContent && (
-            <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-amber-100 bg-amber-50/50 text-[11px] text-amber-700 font-bold mt-4">
-              <AlertTriangle size={14} /> Unsaved changes in: {Array.from(dirtySections).join(", ")}
+            <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-[11px] text-amber-800 mt-4">
+              <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-bold">Unsaved changes in: {dirtyLabels || "current section"}</p>
+                <p className="font-normal mt-0.5 text-amber-700">
+                  Your draft is auto-saved to local storage. <b>Refresh the page to discard</b> unsaved changes, or click <b>Save Draft</b> to persist to the server.
+                </p>
+              </div>
             </div>
           )}
 

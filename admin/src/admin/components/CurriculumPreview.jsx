@@ -992,6 +992,32 @@ export const CD_PREVIEW_STYLES = `
     .cpv-doc.cpv-doc-fm > .cpv-frontpage {
       padding: 14mm 15mm 16mm 15mm !important;
     }
+
+
+
+    /* New-style CO table (application + Bloom columns) */
+.cpv-t-co th:nth-child(1), .cpv-t-co td:nth-child(1) { width: 8%; }
+.cpv-t-co th:nth-child(2), .cpv-t-co td:nth-child(2) { width: 46%; }
+.cpv-t-co th:nth-child(3), .cpv-t-co td:nth-child(3) { width: 34%; }
+.cpv-t-co th:nth-child(4), .cpv-t-co td:nth-child(4) { width: 12%; text-align: center; }
+
+/* Lesson plan (teaching) — 6-col variant */
+.cpv-t-teach th:nth-child(1), .cpv-t-teach td:nth-child(1) { width: 7%;  text-align: center; }
+.cpv-t-teach th:nth-child(2), .cpv-t-teach td:nth-child(2) { width: 26%; }
+.cpv-t-teach th:nth-child(3), .cpv-t-teach td:nth-child(3) { width: 32%; }
+.cpv-t-teach th:nth-child(4), .cpv-t-teach td:nth-child(4) { width: 18%; }
+.cpv-t-teach th:nth-child(5), .cpv-t-teach td:nth-child(5) { width: 10%; text-align: center; }
+.cpv-t-teach th:nth-child(6), .cpv-t-teach td:nth-child(6) { width: 7%;  text-align: center; }
+
+/* Attainment tables */
+.cpv-t-attain th:nth-child(1), .cpv-t-attain td:nth-child(1) { width: 10%; text-align: center; }
+.cpv-t-attain th:nth-child(2), .cpv-t-attain td:nth-child(2) { width: 55%; }
+.cpv-t-attain th:nth-child(3), .cpv-t-attain td:nth-child(3) { width: 17.5%; text-align: center; }
+.cpv-t-attain th:nth-child(4), .cpv-t-attain td:nth-child(4) { width: 17.5%; text-align: center; }
+
+
+
+
     .cpv-doc:last-child { page-break-after: auto; break-after: auto; }
     .cpv-sem-divider { background: #fafafa !important; border: 1pt solid var(--rule) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .cpv-cover, .cpv-backcover { border: 3pt double var(--rule-dark) !important; }
@@ -1010,36 +1036,43 @@ export const CD_SECTIONS = {
     label: "1. Course Identity",
     subsections: [
       { id: "identity", label: "Identity Information", field: "identity" },
-      { id: "credits",  label: "Credits",              field: "credits"  },
+      { id: "credits", label: "Credits", field: "credits" },
     ],
   },
   section2: {
     id: "section2",
     label: "2. Course Details",
     subsections: [
-      { id: "aimsSummary",    label: "Course Aims and Summary", field: "aimsSummary"    },
-      { id: "objectives",     label: "Course Objectives",       field: "objectives"     },
-      { id: "courseOutcomes", label: "Course Outcomes (COs)",   field: "courseOutcomes" },
-      { id: "outcomeMap",     label: "Outcome Map (CO → PO/PSO)", field: "outcomeMap"   },
+      { id: "aimsSummary", label: "Course Aims and Summary", field: "aimsSummary" },
+      { id: "objectives", label: "Course Objectives", field: "objectives" },
+      { id: "courseOutcomes", label: "Course Outcomes (COs)", field: "courseOutcomes" },
+      { id: "outcomeMap", label: "Outcome Map (CO → PO/PSO)", field: "outcomeMap" },
+      { id: "courseContent", label: "Course Content (Syllabus)", field: "courseContent" },
+      { id: "resources", label: "Course Resources", field: "resources" },
     ],
   },
   section3: {
     id: "section3",
-    label: "3. Syllabus & Teaching",
+    label: "3. Teaching & Assessment",
     subsections: [
-      { id: "courseContent", label: "Course Content (Syllabus)", field: "courseContent" },
-      { id: "teaching",      label: "Teaching Schedule",         field: "teaching"      },
+      { id: "teaching", label: "Lesson Plan", field: "teaching" },
+      { id: "assessmentWeight", label: "Assessment Weight Distribution", field: "assessmentWeight" },
+      { id: "schedule", label: "Schedule of Assessments", field: "schedule" },
+      { id: "passingCriterion", label: "Passing Criterion", field: "passingCriterion" },
+      { id: "gradingCriterion", label: "Grading Criterion", field: "gradingCriterion" },
     ],
   },
   section4: {
     id: "section4",
-    label: "4. Resources & Assessment",
+    label: "4. Attainment & Other",
     subsections: [
-      { id: "resources",              label: "Course Resources",                field: "resources"              },
-      { id: "assessmentWeight",       label: "Assessment Weight Distribution",  field: "assessmentWeight"       },
-      { id: "gradingCriterion",       label: "Grading Criterion",               field: "gradingCriterion"       },
-      { id: "attainmentCalculations", label: "Attainment Calculations",         field: "attainmentCalculations" },
-      { id: "otherDetails",           label: "Other Details",                   field: "otherDetails"           },
+      { id: "attainmentTargets", label: "Setting Attainment Targets", field: "attainmentTargets" },
+      { id: "performanceRecording", label: "Performance Recording", field: "performanceRecording" },
+      { id: "performancePlots", label: "Performance Plotting & CAB", field: "performancePlots" },
+      { id: "cabAnalysis", label: "CAB Meeting Analysis", field: "cabAnalysis" },
+      { id: "coAttainmentMapping", label: "Mapping of CO Attained Values", field: "coAttainmentMapping" },
+      { id: "feedback", label: "Feedback to Faculty Member", field: "feedback" },
+      { id: "otherDetails", label: "Assignment Details & Integrity", field: "otherDetails" },
     ],
   },
 };
@@ -1109,7 +1142,7 @@ export const CDRenderer = ({
     return selectedSections[key] !== false;
   };
 
-  const courseCode  = f("courseCode")  || "—";
+  const courseCode = f("courseCode") || "—";
   const courseTitle = f("courseTitle") || "Course";
 
   const s2Visible =
@@ -1117,12 +1150,20 @@ export const CDRenderer = ({
     show("section2", "objectives") ||
     show("section2", "courseOutcomes") ||
     show("section2", "outcomeMap");
-  const s3Visible = show("section3", "courseContent") || show("section3", "teaching");
+  const s3Visible =
+    show("section3", "teaching") ||
+    show("section3", "assessmentWeight") ||
+    show("section3", "schedule") ||
+    show("section3", "passingCriterion") ||
+    show("section3", "gradingCriterion");
+
   const s4Visible =
-    show("section4", "resources") ||
-    show("section4", "assessmentWeight") ||
-    show("section4", "gradingCriterion") ||
-    show("section4", "attainmentCalculations") ||
+    show("section4", "attainmentTargets") ||
+    show("section4", "performanceRecording") ||
+    show("section4", "performancePlots") ||
+    show("section4", "cabAnalysis") ||
+    show("section4", "coAttainmentMapping") ||
+    show("section4", "feedback") ||
     show("section4", "otherDetails");
   const s1Visible = show("section1", "identity") || show("section1", "credits");
 
@@ -1242,19 +1283,87 @@ export const CDRenderer = ({
             <table className="cpv-t-co">
               <thead>
                 <tr>
-                  <th>Course Outcome</th>
-                  <th style={{ textAlign: "left" }}>Description</th>
+                  <th style={{ width: "8%" }}>COs</th>
+                  <th style={{ textAlign: "left" }}>Course Outcomes</th>
+                  <th style={{ textAlign: "left", width: "26%" }}>Real Life Application</th>
+                  <th style={{ width: "10%" }}>Bloom's Level</th>
                 </tr>
               </thead>
               <tbody>
                 {d.courseOutcomes.map((co, i) => (
                   <tr key={i}>
-                    <td>{co.code}</td>
+                    <td style={{ textAlign: "center", fontWeight: 700 }}>{co.code}</td>
                     <td style={{ textAlign: "justify" }}>{parse(co.description || "")}</td>
+                    <td style={{ textAlign: "justify" }}>{co.application || ""}</td>
+                    <td style={{ textAlign: "center" }}>{co.bloom || ""}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section2", "outcomeMap") && (
+        <>
+          <H3>2.4 Outcome Map (CO → PO / PSO)</H3>
+          {!isEmpty(d.outcomeMapHtml) ? (
+            <Body>{parse(normaliseAssets(d.outcomeMapHtml))}</Body>
+          ) : d.outcomeMap?.matrix?.length >= 2 ? (
+            <table>
+              <thead>
+                <tr>
+                  {d.outcomeMap.matrix[0].map((h, i) => (
+                    <th key={i} style={{ fontSize: "8.5pt" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {d.outcomeMap.matrix.slice(1).map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} style={{
+                        textAlign: "center",
+                        fontWeight: ci === 0 ? 700 : 400,
+                        fontSize: "8.5pt",
+                      }}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+          <p className="cpv-note">Relevance: 1 = High · 2 = Medium · 3 = Low</p>
+        </>
+      )}
+
+      {show("section2", "courseContent") && (
+        <>
+          <H2>2.5 Course Content (Syllabus)</H2>
+          <Body>{P(normaliseAssets(d.courseContent))}</Body>
+        </>
+      )}
+
+      {show("section2", "resources") && (
+        <>
+          <H2>2.6 Course Resources</H2>
+          <H3>Text Books</H3>
+          {d.resources?.textBooks?.length ? (
+            <ol style={{ paddingLeft: "6mm", marginBottom: "2mm" }}>
+              {d.resources.textBooks.map((t, i) => <li key={i}>{t}</li>)}
+            </ol>
+          ) : (<Empty />)}
+          <H3>Reference Books</H3>
+          {d.resources?.references?.length ? (
+            <ol style={{ paddingLeft: "6mm", marginBottom: "2mm" }}>
+              {d.resources.references.map((r, i) => <li key={i}>{r}</li>)}
+            </ol>
+          ) : (<Empty />)}
+          <H3>Other Resources</H3>
+          {d.resources?.otherResources?.length ? (
+            <ul style={{ paddingLeft: "6mm", marginBottom: "2mm" }}>
+              {d.resources.otherResources.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
           ) : (<Empty />)}
         </>
       )}
@@ -1298,7 +1407,103 @@ export const CDRenderer = ({
       )}
 
       {s3Visible && (
-        <H1 id={`course-${courseCode}-sec3`}>3. Syllabus and Teaching</H1>
+        <H1 id={`course-${courseCode}-sec3`}>3. Teaching and Assessment</H1>
+      )}
+
+      {show("section3", "teaching") && (
+        <>
+          <H2>3.1 Lesson Plan</H2>
+          {!isEmpty(d.teachingHtml) ? (
+            <Body>{parse(normaliseAssets(d.teachingHtml))}</Body>
+          ) : d.teaching?.length ? (
+            <table className="cpv-t-teach">
+              <thead>
+                <tr>
+                  <th style={{ width: "7%" }}>Class No.</th>
+                  <th style={{ textAlign: "left" }}>Topic Title</th>
+                  <th style={{ textAlign: "left" }}>Teaching Focus</th>
+                  <th style={{ textAlign: "left", width: "18%" }}>Activity</th>
+                  <th style={{ width: "9%" }}>CO(s)</th>
+                  <th style={{ width: "7%" }}>Hrs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.teaching.map((t, i) => (
+                  <tr key={i}>
+                    <td style={{ textAlign: "center", fontWeight: 700 }}>{t.number}</td>
+                    <td>{t.topic}</td>
+                    <td>{t.teachingFocus}</td>
+                    <td>{t.activity}</td>
+                    <td style={{ textAlign: "center" }}>{t.cosCovered}</td>
+                    <td style={{ textAlign: "center" }}>{t.hours}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section3", "assessmentWeight") && (
+        <>
+          <H2>3.2 Assessment Weight Distribution</H2>
+          {!isEmpty(d.assessmentWeightHtml) ? (
+            <Body>{parse(normaliseAssets(d.assessmentWeightHtml))}</Body>
+          ) : d.assessmentWeight?.length ? (
+            <table className="cpv-t-aw">
+              <thead>
+                <tr>
+                  <th rowSpan={2} className="co-col">COs<br />with Wt.</th>
+                  <th colSpan={3}>Quiz (15)</th>
+                  <th colSpan={3}>Test (25)</th>
+                  <th colSpan={2}>Assignment (20)</th>
+                  <th rowSpan={2}>CIE<br />=60</th>
+                  <th rowSpan={2}>SEE<br />=40</th>
+                </tr>
+                <tr>
+                  {["Q1\n=5", "Q2\n=4", "Q3\n=6", "T1\n=7", "T2\n=8", "T3\n=10", "A1\n=10", "A2\n=10"].map((l) => (
+                    <th key={l} style={{ whiteSpace: "pre-line" }}>{l}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {d.assessmentWeight.map((row, i) => (
+                  <tr key={i}>
+                    <td className="co-col">{row.co}</td>
+                    {["q1", "q2", "q3", "t1", "t2", "t3", "a1", "a2"].map((k) => (
+                      <td key={k} style={{ textAlign: "center" }}>{row[k] || ""}</td>
+                    ))}
+                    <td style={{ textAlign: "center", fontWeight: 700 }}>{row.cie || ""}</td>
+                    <td style={{ textAlign: "center", fontWeight: 700 }}>{row.see || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section3", "schedule") && (
+        <>
+          <H2>3.3 Schedule of Assessments</H2>
+          {!isEmpty(d.scheduleHtml) ? (
+            <Body>{parse(normaliseAssets(d.scheduleHtml))}</Body>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section3", "passingCriterion") && (
+        <>
+          <H2>3.4 Passing Criterion</H2>
+          <Body>{P(normaliseAssets(d.passingCriterion))}</Body>
+        </>
+      )}
+
+      {show("section3", "gradingCriterion") && (
+        <>
+          <H2>3.5 Grading Criterion</H2>
+          <Body>{P(normaliseAssets(d.gradingCriterion))}</Body>
+        </>
       )}
 
       {show("section3", "courseContent") && (
@@ -1337,7 +1542,152 @@ export const CDRenderer = ({
       )}
 
       {s4Visible && (
-        <H1 id={`course-${courseCode}-sec4`}>4. Resources and Assessment</H1>
+        <H1 id={`course-${courseCode}-sec4`}>4. Attainment and Other Details</H1>
+      )}
+
+      {show("section4", "attainmentTargets") && (
+        <>
+          <H2>4.1 Setting Attainment Targets</H2>
+          {!isEmpty(d.attainmentTargetsHtml) ? (
+            <Body>{parse(normaliseAssets(d.attainmentTargetsHtml))}</Body>
+          ) : d.attainmentTargets?.length ? (
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: "10%" }}>COs</th>
+                  <th style={{ textAlign: "left" }}>Attainment Target</th>
+                  <th style={{ width: "20%" }}>Attained</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.attainmentTargets.map((t, i) => (
+                  <tr key={i}>
+                    <td style={{ textAlign: "center", fontWeight: 700 }}>{t.co}</td>
+                    <td>
+                      {t.aText && <div>{t.aText}</div>}
+                      {t.bPlusText && <div>{t.bPlusText}</div>}
+                      {t.bText && <div>{t.bText}</div>}
+                    </td>
+                    <td style={{ textAlign: "center" }}>{t.aAttained}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section4", "performanceRecording") && (
+        <>
+          <H2>4.2 Performance Recording</H2>
+          {!isEmpty(d.performanceRecordingHtml) ? (
+            <Body>{parse(normaliseAssets(d.performanceRecordingHtml))}</Body>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section4", "performancePlots") && (
+        <>
+          <H2>4.3 Performance Plotting &amp; CAB</H2>
+          <Body>
+            <p className="cpv-note" style={{ marginBottom: "3mm" }}>
+              Distribution of grades and per-CO target vs attained bands (see exported PDF for charts).
+            </p>
+          </Body>
+        </>
+      )}
+
+      {show("section4", "cabAnalysis") && (
+        <>
+          <H2>4.4 CAB Meeting, Analysis and Feedback</H2>
+          {!isEmpty(d.cabAnalysis?.analysisNotes) ? (
+            <Body>{parse(normaliseAssets(d.cabAnalysis.analysisNotes))}</Body>
+          ) : d.attainmentTargets?.length ? (
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: "8%" }}>COs</th>
+                  <th style={{ textAlign: "left" }}>Outcomes</th>
+                  <th style={{ width: "18%" }}>Target</th>
+                  <th style={{ width: "18%" }}>Attained</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.attainmentTargets.map((t, i) => (
+                  <tr key={i}>
+                    <td style={{ textAlign: "center" }}>{t.co}</td>
+                    <td>
+                      {t.aText && <div>{t.aText}</div>}
+                      {t.bPlusText && <div>{t.bPlusText}</div>}
+                      {t.bText && <div>{t.bText}</div>}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {t.aTarget && <div>{t.aTarget}</div>}
+                      {t.bPlusTarget && <div>{t.bPlusTarget}</div>}
+                      {t.bTarget && <div>{t.bTarget}</div>}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {t.aAttained && <div>{t.aAttained}</div>}
+                      {t.bPlusAttained && <div>{t.bPlusAttained}</div>}
+                      {t.bAttained && <div>{t.bAttained}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section4", "coAttainmentMapping") && (
+        <>
+          <H2>4.5 Mapping of CO Attained Values</H2>
+          {!isEmpty(d.coAttainmentMappingHtml) ? (
+            <Body>{parse(normaliseAssets(d.coAttainmentMappingHtml))}</Body>
+          ) : d.coAttainmentMapping?.length >= 2 ? (
+            <table>
+              <thead>
+                <tr>
+                  {d.coAttainmentMapping[0].map((h, i) => (
+                    <th key={i} style={{ fontSize: "8.5pt" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {d.coAttainmentMapping.slice(1).map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} style={{
+                        textAlign: "center",
+                        fontWeight: ci === 0 ? 700 : 400,
+                        fontSize: "8.5pt",
+                      }}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section4", "feedback") && (
+        <>
+          <H2>4.6 Feedback to Faculty Member</H2>
+          {!isEmpty(d.feedbackHtml) ? (
+            <Body>{parse(normaliseAssets(d.feedbackHtml))}</Body>
+          ) : (<Empty />)}
+        </>
+      )}
+
+      {show("section4", "otherDetails") && (
+        <>
+          <H2>4.7 Other Details</H2>
+          <H3>Assignment Details / Problem Based Learning</H3>
+          <Body>{P(d.otherDetails?.assignmentDetails)}</Body>
+          <H3>Academic Integrity Policy</H3>
+          <Body>{P(d.otherDetails?.academicIntegrity)}</Body>
+        </>
       )}
 
       {show("section4", "resources") && (
@@ -1673,10 +2023,10 @@ export const FullCurriculumPreview = ({
           courseCode: cd.courseCode,
           courseTitle: cd.courseTitle,
         });
-        items.push({ id: `course-${cd.courseCode}-sec1`, label: "1. Course Identity",        level: 2, kind: "subsection", courseCode: cd.courseCode });
-        items.push({ id: `course-${cd.courseCode}-sec2`, label: "2. Course Details",         level: 2, kind: "subsection", courseCode: cd.courseCode });
-        items.push({ id: `course-${cd.courseCode}-sec3`, label: "3. Syllabus & Teaching",    level: 2, kind: "subsection", courseCode: cd.courseCode });
-        items.push({ id: `course-${cd.courseCode}-sec4`, label: "4. Resources & Assessment", level: 2, kind: "subsection", courseCode: cd.courseCode });
+        items.push({ id: `course-${cd.courseCode}-sec1`, label: "1. Course Identity", level: 2, kind: "subsection", courseCode: cd.courseCode });
+        items.push({ id: `course-${cd.courseCode}-sec2`, label: "2. Course Details", level: 2, kind: "subsection", courseCode: cd.courseCode });
+        items.push({ id: `course-${cd.courseCode}-sec3`, label: "3. Teaching & Assessment", level: 2, kind: "subsection", courseCode: cd.courseCode });
+        items.push({ id: `course-${cd.courseCode}-sec4`, label: "4. Attainment & Other", level: 2, kind: "subsection", courseCode: cd.courseCode });
       });
     });
 
@@ -1981,9 +2331,8 @@ export const FullCurriculumPreview = ({
               return (
                 <button
                   key={it.id}
-                  className={`cpv-side-item ${
-                    it.level === 1 ? "lvl-1" : it.level === 2 ? "lvl-2" : ""
-                  } ${activeId === it.id ? "active" : ""}`}
+                  className={`cpv-side-item ${it.level === 1 ? "lvl-1" : it.level === 2 ? "lvl-2" : ""
+                    } ${activeId === it.id ? "active" : ""}`}
                   onClick={() => scrollTo(it.id)}
                 >
                   {it.kind === "semester" && <Layers size={12} style={{ opacity: 0.6 }} />}
@@ -2366,18 +2715,31 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
     isEmpty(h) ? fb : h;
   const code = f("courseCode") || "—";
 
+  /* ── Updated visibility flags for the new structure ───────────── */
   const s1Visible = show("section1", "identity") || show("section1", "credits");
+
   const s2Visible =
     show("section2", "aimsSummary") ||
     show("section2", "objectives") ||
     show("section2", "courseOutcomes") ||
-    show("section2", "outcomeMap");
-  const s3Visible = show("section3", "courseContent") || show("section3", "teaching");
+    show("section2", "outcomeMap") ||
+    show("section2", "courseContent") ||
+    show("section2", "resources");
+
+  const s3Visible =
+    show("section3", "teaching") ||
+    show("section3", "assessmentWeight") ||
+    show("section3", "schedule") ||
+    show("section3", "passingCriterion") ||
+    show("section3", "gradingCriterion");
+
   const s4Visible =
-    show("section4", "resources") ||
-    show("section4", "assessmentWeight") ||
-    show("section4", "gradingCriterion") ||
-    show("section4", "attainmentCalculations") ||
+    show("section4", "attainmentTargets") ||
+    show("section4", "performanceRecording") ||
+    show("section4", "performancePlots") ||
+    show("section4", "cabAnalysis") ||
+    show("section4", "coAttainmentMapping") ||
+    show("section4", "feedback") ||
     show("section4", "otherDetails");
 
   /* id is "course-<code>" so the exported TOC can jump straight to it */
@@ -2400,6 +2762,9 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
     </div>
   </div>`;
 
+  /* ════════════════════════════════════════════════════════════════
+     SECTION 1 — COURSE IDENTITY
+  ════════════════════════════════════════════════════════════════ */
   if (s1Visible) {
     out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec1">1. Course Identity</h2>`;
   }
@@ -2444,84 +2809,71 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
       </tbody></table>`;
   }
 
+  /* ════════════════════════════════════════════════════════════════
+     SECTION 2 — COURSE DETAILS  (2.1 – 2.6)
+  ════════════════════════════════════════════════════════════════ */
   if (s2Visible) {
     out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec2">2. Course Details</h2>`;
   }
+
   if (show("section2", "aimsSummary")) {
     out += `<h3 class="cpv-h2">2.1 Course Aims and Summary</h3>
       <div class="cpv-body">${P(d.aimsSummary)}</div>`;
   }
+
   if (show("section2", "objectives")) {
     out += `<h3 class="cpv-h2">2.2 Course Objectives</h3>
       <div class="cpv-body">${P(d.objectives)}</div>`;
   }
+
+  /* 2.3 COs with application + Bloom */
   if (show("section2", "courseOutcomes")) {
     out += `<h3 class="cpv-h2">2.3 Course Outcomes (COs)</h3>
       <div class="cpv-body"><p style="font-style:italic;margin-bottom:2mm;">After undergoing this course, students will be able to:</p></div>`;
     if (!isEmpty(d.courseOutcomesHtml)) {
       out += `<div class="cpv-body">${d.courseOutcomesHtml}</div>`;
     } else if (d.courseOutcomes?.length) {
-      out += `<table class="cpv-t-co"><thead>
-        <tr><th>Course Outcome</th><th style="text-align:left;">Description</th></tr>
-      </thead><tbody>
-        ${d.courseOutcomes
-          .map(
-            (co) =>
-              `<tr><td>${esc(co.code)}</td><td style="text-align:justify;">${co.description || ""}</td></tr>`
-          )
-          .join("")}
-      </tbody></table>`;
+      out += `<table class="cpv-t-co"><thead><tr>
+        <th style="width:8%;">COs</th>
+        <th style="text-align:left;width:46%;">Course Outcomes</th>
+        <th style="text-align:left;width:34%;">Real Life Application</th>
+        <th style="width:12%;">Bloom's Level</th>
+      </tr></thead><tbody>${d.courseOutcomes.map((co) =>
+        `<tr>
+            <td style="text-align:center;font-weight:700;">${esc(co.code)}</td>
+            <td style="text-align:justify;">${co.description || ""}</td>
+            <td style="text-align:justify;">${esc(co.application || "")}</td>
+            <td style="text-align:center;">${esc(co.bloom || "")}</td>
+          </tr>`).join("")
+        }</tbody></table>`;
     }
   }
+
+  /* 2.4 Outcome map */
   if (show("section2", "outcomeMap")) {
     out += `<h4 class="cpv-h3">2.4 Outcome Map (CO → PO / PSO)</h4>`;
     if (!isEmpty(d.outcomeMapHtml)) {
       out += `<div class="cpv-body">${d.outcomeMapHtml}</div>`;
     } else if (d.outcomeMap?.matrix?.length >= 2) {
       out += `<table><thead><tr>${d.outcomeMap.matrix[0]
-        .map((h) => `<th style="font-size:8.5pt;">${esc(h)}</th>`)
-        .join("")}</tr></thead><tbody>${d.outcomeMap.matrix
-        .slice(1)
-        .map(
-          (row) =>
-            `<tr>${row
-              .map(
-                (cell, ci) =>
-                  `<td style="text-align:center;font-size:8.5pt;${ci === 0 ? "font-weight:700;" : ""}">${esc(cell)}</td>`
-              )
-              .join("")}</tr>`
-        )
-        .join("")}</tbody></table>`;
+        .map((h) => `<th style="font-size:8.5pt;">${esc(h)}</th>`).join("")}</tr></thead><tbody>${d.outcomeMap.matrix.slice(1).map((row) =>
+          `<tr>${row.map((cell, ci) =>
+            `<td style="text-align:center;font-size:8.5pt;${ci === 0 ? "font-weight:700;" : ""}">${esc(cell)}</td>`
+          ).join("")}</tr>`).join("")
+        }</tbody></table>`;
     }
     out += `<p class="cpv-note">Relevance: 1 = High · 2 = Medium · 3 = Low</p>`;
   }
 
-  if (s3Visible) {
-    out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec3">3. Syllabus and Teaching</h2>`;
-  }
-  if (show("section3", "courseContent")) {
-    out += `<h3 class="cpv-h2">3.1 Course Content</h3>
+  /* 2.5 Course content */
+  if (show("section2", "courseContent")) {
+    out += `<h3 class="cpv-h2">2.5 Course Content (Syllabus)</h3>
       <div class="cpv-body">${P(d.courseContent)}</div>`;
   }
-  if (show("section3", "teaching")) {
-    out += `<h3 class="cpv-h2">3.2 Teaching Schedule</h3>`;
-    if (d.teaching?.length) {
-      out += `<table class="cpv-t-teach"><thead>
-        <tr><th>Sl. No.</th><th style="text-align:left;">Lecture Topic</th><th>Slides</th><th>Videos</th></tr>
-      </thead><tbody>${d.teaching
-        .map(
-          (l) =>
-            `<tr><td style="text-align:center;">${esc(l.number)}</td><td>${esc(l.topic)}</td><td style="text-align:center;">${esc(l.slides)}</td><td style="text-align:center;">${esc(l.videos)}</td></tr>`
-        )
-        .join("")}</tbody></table>`;
-    } else out += `<p class="cpv-empty">Not provided.</p>`;
-  }
 
-  if (s4Visible) {
-    out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec4">4. Resources and Assessment</h2>`;
-  }
-  if (show("section4", "resources")) {
-    out += `<h3 class="cpv-h2">4.1 Course Resources</h3>
+  /* 2.6 Resources */
+  if (show("section2", "resources")) {
+    out += `<h3 class="cpv-h2">2.6 Course Resources</h3>
       <h4 class="cpv-h3">Text Books</h4>`;
     out += d.resources?.textBooks?.length
       ? `<ol style="padding-left:6mm;">${d.resources.textBooks.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>`
@@ -2536,8 +2888,41 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
       : `<p class="cpv-empty">Not provided.</p>`;
   }
 
-  if (show("section4", "assessmentWeight")) {
-    out += `<h3 class="cpv-h2">4.2 Assessment Weight Distribution</h3>`;
+  /* ════════════════════════════════════════════════════════════════
+     SECTION 3 — TEACHING AND ASSESSMENT  (3.1 – 3.5)
+  ════════════════════════════════════════════════════════════════ */
+  if (s3Visible) {
+    out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec3">3. Teaching and Assessment</h2>`;
+  }
+
+  /* 3.1 Lesson Plan */
+  if (show("section3", "teaching")) {
+    out += `<h3 class="cpv-h2">3.1 Lesson Plan</h3>`;
+    if (!isEmpty(d.teachingHtml)) {
+      out += `<div class="cpv-body">${d.teachingHtml}</div>`;
+    } else if (d.teaching?.length) {
+      out += `<table class="cpv-t-teach"><thead><tr>
+        <th style="width:7%;">Class No.</th>
+        <th style="text-align:left;width:26%;">Topic Title</th>
+        <th style="text-align:left;width:32%;">Teaching Focus</th>
+        <th style="text-align:left;width:18%;">Activity</th>
+        <th style="width:10%;">CO(s)</th>
+        <th style="width:7%;">Hrs</th>
+      </tr></thead><tbody>${d.teaching.map((t) => `<tr>
+          <td style="text-align:center;font-weight:700;">${esc(t.number)}</td>
+          <td>${esc(t.topic)}</td>
+          <td>${esc(t.teachingFocus)}</td>
+          <td>${esc(t.activity)}</td>
+          <td style="text-align:center;">${esc(t.cosCovered)}</td>
+          <td style="text-align:center;">${esc(t.hours)}</td>
+        </tr>`).join("")
+        }</tbody></table>`;
+    } else out += `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 3.2 Assessment Weight Distribution */
+  if (show("section3", "assessmentWeight")) {
+    out += `<h3 class="cpv-h2">3.2 Assessment Weight Distribution</h3>`;
     if (!isEmpty(d.assessmentWeightHtml)) {
       out += `<div class="cpv-body">${d.assessmentWeightHtml}</div>`;
     } else if (d.assessmentWeight?.length) {
@@ -2550,51 +2935,128 @@ const renderCDToHTML = (cd, selectedSections, meta, institution) => {
           <th rowspan="2">CIE<br>=60</th>
           <th rowspan="2">SEE<br>=40</th>
         </tr>
-        <tr>${["Q1\n=5","Q2\n=4","Q3\n=6","T1\n=7","T2\n=8","T3\n=10","A1\n=10","A2\n=10"]
+        <tr>${["Q1\n=5", "Q2\n=4", "Q3\n=6", "T1\n=7", "T2\n=8", "T3\n=10", "A1\n=10", "A2\n=10"]
           .map((l) => `<th style="white-space:pre-line;">${l}</th>`)
           .join("")}</tr>
       </thead><tbody>${d.assessmentWeight
-        .map(
-          (row) =>
-            `<tr>
+          .map(
+            (row) =>
+              `<tr>
               <td class="co-col">${esc(row.co)}</td>
-              ${["q1","q2","q3","t1","t2","t3","a1","a2"]
+              ${["q1", "q2", "q3", "t1", "t2", "t3", "a1", "a2"]
                 .map((k) => `<td style="text-align:center;">${esc(row[k] || "")}</td>`)
                 .join("")}
               <td style="text-align:center;font-weight:700;">${esc(row.cie || "")}</td>
               <td style="text-align:center;font-weight:700;">${esc(row.see || "")}</td>
             </tr>`
-        )
-        .join("")}</tbody></table>`;
+          )
+          .join("")}</tbody></table>`;
     } else out += `<p class="cpv-empty">Not provided.</p>`;
   }
 
-  if (show("section4", "gradingCriterion")) {
-    out += `<h3 class="cpv-h2">4.3 Grading Criterion</h3>
+  /* 3.3 Schedule of Assessments */
+  if (show("section3", "schedule")) {
+    out += `<h3 class="cpv-h2">3.3 Schedule of Assessments</h3>`;
+    out += !isEmpty(d.scheduleHtml)
+      ? `<div class="cpv-body">${d.scheduleHtml}</div>`
+      : `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 3.4 Passing Criterion */
+  if (show("section3", "passingCriterion")) {
+    out += `<h3 class="cpv-h2">3.4 Passing Criterion</h3>
+      <div class="cpv-body">${P(d.passingCriterion)}</div>`;
+  }
+
+  /* 3.5 Grading Criterion */
+  if (show("section3", "gradingCriterion")) {
+    out += `<h3 class="cpv-h2">3.5 Grading Criterion</h3>
       <div class="cpv-body">${P(d.gradingCriterion)}</div>`;
   }
-  if (
-    show("section4", "attainmentCalculations") &&
-    (d.attainmentCalculations?.recordingMarks || d.attainmentCalculations?.settingTargets)
-  ) {
-    out += `<h3 class="cpv-h2">4.4 Attainment Calculations</h3>`;
-    if (d.attainmentCalculations.recordingMarks) {
-      out += `<h4 class="cpv-h3">Recording Marks and Awarding Grades</h4>
-        <div class="cpv-body">${P(d.attainmentCalculations.recordingMarks)}</div>`;
-    }
-    if (d.attainmentCalculations.settingTargets) {
-      out += `<h4 class="cpv-h3">Setting Attainment Targets</h4>
-        <div class="cpv-body">${P(d.attainmentCalculations.settingTargets)}</div>`;
-    }
+
+  /* ════════════════════════════════════════════════════════════════
+     SECTION 4 — ATTAINMENT AND OTHER  (4.1 – 4.7)
+  ════════════════════════════════════════════════════════════════ */
+  if (s4Visible) {
+    out += `<h2 class="cpv-h1" id="course-${esc(code)}-sec4">4. Attainment and Other Details</h2>`;
   }
+
+  /* 4.1 Setting Attainment Targets */
+  if (show("section4", "attainmentTargets")) {
+    out += `<h3 class="cpv-h2">4.1 Setting Attainment Targets</h3>`;
+    if (!isEmpty(d.attainmentTargetsHtml)) {
+      out += `<div class="cpv-body">${d.attainmentTargetsHtml}</div>`;
+    } else if (d.attainmentTargets?.length) {
+      out += `<table><thead><tr>
+        <th style="width:10%;">COs</th>
+        <th style="text-align:left;">Attainment Target</th>
+        <th style="width:20%;">Attained</th>
+      </tr></thead><tbody>${d.attainmentTargets.map((t) => `<tr>
+          <td style="text-align:center;font-weight:700;">${esc(t.co)}</td>
+          <td>${esc(t.aText || "")}${t.bPlusText ? "<br>" + esc(t.bPlusText) : ""}${t.bText ? "<br>" + esc(t.bText) : ""}</td>
+          <td style="text-align:center;">${esc(t.aAttained || "")}</td>
+        </tr>`).join("")
+        }</tbody></table>`;
+    } else out += `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 4.2 Performance Recording */
+  if (show("section4", "performanceRecording")) {
+    out += `<h3 class="cpv-h2">4.2 Performance Recording</h3>`;
+    out += !isEmpty(d.performanceRecordingHtml)
+      ? `<div class="cpv-body">${d.performanceRecordingHtml}</div>`
+      : `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 4.3 Performance Plotting & CAB — note only (charts live in the PDF) */
+  if (show("section4", "performancePlots")) {
+    out += `<h3 class="cpv-h2">4.3 Performance Plotting &amp; CAB</h3>
+      <p class="cpv-note">Distribution charts are reproduced in the PDF export.</p>`;
+  }
+
+  /* 4.4 CAB Meeting, Analysis and Feedback */
+  if (show("section4", "cabAnalysis")) {
+    out += `<h3 class="cpv-h2">4.4 CAB Meeting, Analysis and Feedback</h3>`;
+    if (!isEmpty(d.cabAnalysis?.analysisNotes)) {
+      out += `<div class="cpv-body">${d.cabAnalysis.analysisNotes}</div>`;
+    } else out += `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 4.5 Mapping of CO Attained Values */
+  if (show("section4", "coAttainmentMapping")) {
+    out += `<h3 class="cpv-h2">4.5 Mapping of CO Attained Values</h3>`;
+    if (!isEmpty(d.coAttainmentMappingHtml)) {
+      out += `<div class="cpv-body">${d.coAttainmentMappingHtml}</div>`;
+    } else if (d.coAttainmentMapping?.length >= 2) {
+      out += `<table><thead><tr>${d.coAttainmentMapping[0]
+        .map((h) => `<th style="font-size:8.5pt;">${esc(h)}</th>`).join("")}</tr></thead><tbody>${d.coAttainmentMapping.slice(1).map((row) =>
+          `<tr>${row.map((cell, ci) =>
+            `<td style="text-align:center;font-size:8.5pt;${ci === 0 ? "font-weight:700;" : ""}">${esc(cell)}</td>`
+          ).join("")}</tr>`).join("")
+        }</tbody></table>`;
+    } else out += `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 4.6 Feedback to Faculty Member */
+  if (show("section4", "feedback")) {
+    out += `<h3 class="cpv-h2">4.6 Feedback to Faculty Member</h3>`;
+    out += !isEmpty(d.feedbackHtml)
+      ? `<div class="cpv-body">${d.feedbackHtml}</div>`
+      : `<p class="cpv-empty">Not provided.</p>`;
+  }
+
+  /* 4.7 Other Details */
   if (show("section4", "otherDetails")) {
-    out += `<h3 class="cpv-h2">4.5 Other Details</h3>
+    out += `<h3 class="cpv-h2">4.7 Other Details</h3>
       <h4 class="cpv-h3">Assignment Details / Problem Based Learning</h4>
       <div class="cpv-body">${P(d.otherDetails?.assignmentDetails)}</div>
       <h4 class="cpv-h3">Academic Integrity Policy</h4>
       <div class="cpv-body">${P(d.otherDetails?.academicIntegrity)}</div>`;
   }
 
+  /* ════════════════════════════════════════════════════════════════
+     SIGNATURE + FOOTER
+  ════════════════════════════════════════════════════════════════ */
   out += `<div class="cpv-sig">
     <div class="cpv-sig-box">Prepared by — Faculty Member</div>
     <div class="cpv-sig-box">Verified by — Head of Department</div>
@@ -2815,37 +3277,35 @@ export const generateStandaloneHTML = ({
     <div class="cpv-doc cpv-doc-fm" id="cpv-top">
       <div class="cpv-cover">
         <div class="cpv-cover-top">
-          <div class="cpv-cover-logo">${
-            curriculumConfig?.logo
-              ? `<img src="${esc(curriculumConfig.logo)}" alt="Logo" />`
-              : "LOGO"
-          }</div>
+          <div class="cpv-cover-logo">${curriculumConfig?.logo
+      ? `<img src="${esc(curriculumConfig.logo)}" alt="Logo" />`
+      : "LOGO"
+    }</div>
           <div class="cpv-cover-univ">${esc(institution)}</div>
           <div class="cpv-cover-sub">${esc(
-            curriculumConfig?.faculty || "Faculty of Engineering"
-          )}</div>
+      curriculumConfig?.faculty || "Faculty of Engineering"
+    )}</div>
           <div class="cpv-cover-rule"></div>
         </div>
         <div class="cpv-cover-mid">
           <div class="cpv-cover-doctype">${esc(doctype)}</div>
-          ${
-            curriculumConfig?.degreeTitle
-              ? `<div class="cpv-cover-degree">${esc(curriculumConfig.degreeTitle)}</div>`
-              : ""
-          }
+          ${curriculumConfig?.degreeTitle
+      ? `<div class="cpv-cover-degree">${esc(curriculumConfig.degreeTitle)}</div>`
+      : ""
+    }
           <div class="cpv-cover-program">${esc(
-            programInfo?.programName || "Program Name"
-          )}</div>
+      programInfo?.programName || "Program Name"
+    )}</div>
           ${scheme ? `<div class="cpv-cover-scheme">${esc(scheme)}</div>` : ""}
         </div>
         <div class="cpv-cover-bottom">
           <div class="school">${esc(
-            curriculumConfig?.school || "School of Engineering"
-          )}</div>
+      curriculumConfig?.school || "School of Engineering"
+    )}</div>
           <div class="faculty">${esc(curriculumConfig?.department || "")}</div>
           <div class="year">Academic Year ${esc(
-            curriculumConfig?.year || new Date().getFullYear()
-          )}</div>
+      curriculumConfig?.year || new Date().getFullYear()
+    )}</div>
         </div>
       </div>
     </div>`;
@@ -2853,13 +3313,12 @@ export const generateStandaloneHTML = ({
   const councilHTML =
     council.length > 0
       ? buildCouncilPages(council)
-          .map(
-            (c, i) =>
-              `<div class="cpv-doc cpv-doc-fm" id="${
-                i === 0 ? "cpv-council" : `cpv-council-${i}`
-              }"><div class="cpv-frontpage">${c.html}</div></div>`
-          )
-          .join("")
+        .map(
+          (c, i) =>
+            `<div class="cpv-doc cpv-doc-fm" id="${i === 0 ? "cpv-council" : `cpv-council-${i}`
+            }"><div class="cpv-frontpage">${c.html}</div></div>`
+        )
+        .join("")
       : "";
 
   /* ── CLICKABLE TOC ───────────────────────────────────────── */
@@ -2879,13 +3338,13 @@ export const generateStandaloneHTML = ({
       <div class="cpv-toc-section">Front Matter</div>
       ${tocEntry("cpv-top", "Cover Page")}
       ${other
-        .map((p) => tocEntry(`frontmatter-${p.name}`, p.displayName || p.name, "cpv-toc-sub"))
-        .join("")}
+      .map((p) => tocEntry(`frontmatter-${p.name}`, p.displayName || p.name, "cpv-toc-sub"))
+      .join("")}
       ${acknowledgement
-        .map((p) =>
-          tocEntry(`frontmatter-${p.name}`, p.displayName || "Acknowledgements", "cpv-toc-sub")
-        )
-        .join("")}
+      .map((p) =>
+        tocEntry(`frontmatter-${p.name}`, p.displayName || "Acknowledgements", "cpv-toc-sub")
+      )
+      .join("")}
       ${council.length ? tocEntry("cpv-council", "Academic Council & Board of Studies", "cpv-toc-sub") : ""}
       ${tocEntry("cpv-toc", "Table of Contents", "cpv-toc-sub")}
       <div class="cpv-toc-section">Curriculum Content</div>`;
@@ -2893,8 +3352,7 @@ export const generateStandaloneHTML = ({
   grouped.forEach((courses, semester) => {
     tocHTML += tocLink(
       `semester-${String(semester)}`,
-      `<span class="code" style="min-width:auto;margin-right:8px;">${
-        typeof semester === "number" ? `Semester ${semester}` : esc(semester)
+      `<span class="code" style="min-width:auto;margin-right:8px;">${typeof semester === "number" ? `Semester ${semester}` : esc(semester)
       }</span><span class="num"></span>`
     );
     courses.forEach((cd) => {
@@ -2912,8 +3370,8 @@ export const generateStandaloneHTML = ({
       ${tocEntry("cpv-back", "Back Cover")}
     </div>
     <div class="cpv-runfoot"><span>${esc(
-      institution
-    )} · Official Curriculum</span><span class="rf-page"></span><span>${esc(
+    institution
+  )} · Official Curriculum</span><span class="rf-page"></span><span>${esc(
     programInfo?.programCode || ""
   )}</span></div>
   </div>`;
@@ -2925,17 +3383,15 @@ export const generateStandaloneHTML = ({
         <div class="cpv-runhead">
           <span class="rh-left">${esc(institution)}</span>
           <span class="rh-mid">${esc(doctype)}</span>
-          <span class="rh-right">${
-            typeof semester === "number" ? `Semester ${semester}` : esc(semester)
-          }</span>
+          <span class="rh-right">${typeof semester === "number" ? `Semester ${semester}` : esc(semester)
+      }</span>
         </div>
         <div class="cpv-sem-divider">
           <div class="label">Semester</div>
-          <div class="num">${
-            typeof semester === "number"
-              ? String(semester).padStart(2, "0")
-              : "—"
-          }</div>
+          <div class="num">${typeof semester === "number"
+        ? String(semester).padStart(2, "0")
+        : "—"
+      }</div>
           <div class="rule"></div>
           <div class="prog">${esc(programInfo?.programName || "Program")}</div>
         </div>
@@ -2961,11 +3417,11 @@ export const generateStandaloneHTML = ({
     : `<div class="cpv-doc" id="cpv-back"><div class="cpv-backcover">
         <div class="bc-title">${esc(institution)}</div>
         <div class="bc-sub">End of Curriculum — ${esc(
-          programInfo?.programName || "Program"
-        )}</div>
+      programInfo?.programName || "Program"
+    )}</div>
         <div class="bc-meta">${esc(scheme)} &nbsp;·&nbsp; ${esc(
-        programInfo?.programCode || ""
-      )}</div>
+      programInfo?.programCode || ""
+    )}</div>
       </div></div>`;
 
   /* Fills TOC page numbers + footer page labels when the HTML is opened */
@@ -3449,9 +3905,9 @@ export const downloadPDF = (html, filename) => {
           img.complete
             ? null
             : new Promise((resolve) => {
-                img.addEventListener("load", resolve, { once: true });
-                img.addEventListener("error", resolve, { once: true });
-              })
+              img.addEventListener("load", resolve, { once: true });
+              img.addEventListener("error", resolve, { once: true });
+            })
         )
       ),
       new Promise((resolve) => setTimeout(resolve, 8000)),
@@ -3501,9 +3957,9 @@ export const printHTML = (html) => {
         img.complete
           ? null
           : new Promise((resolve) => {
-              img.addEventListener("load", resolve, { once: true });
-              img.addEventListener("error", resolve, { once: true });
-            })
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+          })
       )
     ),
     new Promise((resolve) => setTimeout(resolve, 8000)),
@@ -3543,33 +3999,30 @@ export const CDSelectionCard = ({
 }) => {
   return (
     <div
-      className={`border rounded-xl transition-all ${
-        isSelected
-          ? "border-amber-500 bg-amber-50/50 shadow-sm"
-          : "border-stone-200 bg-white hover:border-stone-300"
-      }`}
+      className={`border rounded-xl transition-all ${isSelected
+        ? "border-amber-500 bg-amber-50/50 shadow-sm"
+        : "border-stone-200 bg-white hover:border-stone-300"
+        }`}
     >
       <div className="flex items-center gap-3 p-3">
         <div className="flex flex-col gap-0.5">
           <button
             onClick={onMoveUp}
             disabled={!canMoveUp}
-            className={`p-0.5 rounded ${
-              canMoveUp
-                ? "text-stone-400 hover:text-stone-600 hover:bg-stone-100"
-                : "text-stone-200"
-            }`}
+            className={`p-0.5 rounded ${canMoveUp
+              ? "text-stone-400 hover:text-stone-600 hover:bg-stone-100"
+              : "text-stone-200"
+              }`}
           >
             <ChevronDown size={12} className="rotate-180" />
           </button>
           <button
             onClick={onMoveDown}
             disabled={!canMoveDown}
-            className={`p-0.5 rounded ${
-              canMoveDown
-                ? "text-stone-400 hover:text-stone-600 hover:bg-stone-100"
-                : "text-stone-200"
-            }`}
+            className={`p-0.5 rounded ${canMoveDown
+              ? "text-stone-400 hover:text-stone-600 hover:bg-stone-100"
+              : "text-stone-200"
+              }`}
           >
             <ChevronDown size={12} />
           </button>
@@ -3577,11 +4030,10 @@ export const CDSelectionCard = ({
 
         <button
           onClick={() => onToggle(cd.courseCode)}
-          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-            isSelected
-              ? "bg-amber-500 border-amber-500 text-white"
-              : "border-stone-300 hover:border-amber-400"
-          }`}
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${isSelected
+            ? "bg-amber-500 border-amber-500 text-white"
+            : "border-stone-300 hover:border-amber-400"
+            }`}
         >
           {isSelected && <CheckSquare size={14} />}
         </button>
@@ -3592,11 +4044,10 @@ export const CDSelectionCard = ({
               {cd.courseCode}
             </span>
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                cd.available
-                  ? "bg-green-100 text-green-700"
-                  : "bg-red-100 text-red-600"
-              }`}
+              className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${cd.available
+                ? "bg-green-100 text-green-700"
+                : "bg-red-100 text-red-600"
+                }`}
             >
               {cd.available ? "Available" : "Missing"}
             </span>
@@ -3662,22 +4113,20 @@ export const UniversalSectionSelector = ({
           <button
             type="button"
             onClick={() => toggleAll(true)}
-            className={`text-[11px] px-2 py-1 rounded font-bold border transition-colors ${
-              allOn
-                ? "bg-amber-600 border-amber-600 text-white"
-                : "border-stone-300 text-amber-700 hover:bg-amber-50"
-            }`}
+            className={`text-[11px] px-2 py-1 rounded font-bold border transition-colors ${allOn
+              ? "bg-amber-600 border-amber-600 text-white"
+              : "border-stone-300 text-amber-700 hover:bg-amber-50"
+              }`}
           >
             Select All
           </button>
           <button
             type="button"
             onClick={() => toggleAll(false)}
-            className={`text-[11px] px-2 py-1 rounded font-bold border transition-colors ${
-              allOff
-                ? "bg-stone-700 border-stone-700 text-white"
-                : "border-stone-300 text-stone-600 hover:bg-stone-100"
-            }`}
+            className={`text-[11px] px-2 py-1 rounded font-bold border transition-colors ${allOff
+              ? "bg-stone-700 border-stone-700 text-white"
+              : "border-stone-300 text-stone-600 hover:bg-stone-100"
+              }`}
           >
             Deselect All
           </button>
@@ -3701,11 +4150,10 @@ export const UniversalSectionSelector = ({
                     key={key}
                     type="button"
                     onClick={() => toggle(key)}
-                    className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full border transition-colors ${
-                      isOn
-                        ? "bg-amber-100 border-amber-300 text-amber-800"
-                        : "bg-white border-stone-200 text-stone-400 line-through"
-                    }`}
+                    className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full border transition-colors ${isOn
+                      ? "bg-amber-100 border-amber-300 text-amber-800"
+                      : "bg-white border-stone-200 text-stone-400 line-through"
+                      }`}
                   >
                     {isOn ? <CheckSquare size={11} /> : <Square size={11} />}
                     {sub.label}
