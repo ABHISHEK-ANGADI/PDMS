@@ -4,56 +4,31 @@ CD Document Parser — GM University 2024 + 2026 (Schema v4, Chart-Aware + 3-Ban
 ===========================================================================================
 Returns JSON that plugs directly into the React `sanitizeCDData` reducer:
 
-    { success: bool, message: str, parsedData: [ { ...CDData } ] }
+    { success: bool, message: str, warnings: [str], mapping_empty: bool,
+      parsedData: [ { ...CDData, _diagnostics: {...} } ] }
 
-Schema contract (matches EditCD.jsx v4):
+The CDData schema is unchanged. The only addition is the `_diagnostics` object on
+each parsed CD, which `sanitizeCDData` ignores.
 
-  Identity
-    courseCode | courseTitle | programCode | programTitle
-    schoolCode | schoolTitle | departmentCode | department
-    facultyCode | facultyTitle | offeringDepartment | facultyMember
-    semesterDuration | totalHours | credits{L,T,P,total}
-
-  §1.2/1.3  aimsSummary | objectives
-  §1.4      courseOutcomes[] | courseOutcomesHtml
-  §1.5      outcomeMap.matrix | outcomeMapHtml
-  §1.6      courseContent
-  §1.7      resources{textBooks,references,otherResources}
-            onlineResources[{label,url}]
-  §2.1      teaching[] | teachingHtml
-  §2.2      assessmentWeight[] | assessmentWeightHtml
-  §2.3      scheduleOfAssessments{weeks,rows} | scheduleHtml
-  §2.4      passingCriterion | gradingCriterion
-  §2.5      attainmentTargets[]  ← each row has 3 attained values:
-              aAttained / bPlusAttained / bAttained
-            | attainmentTargetsHtml
-  §2.6      performanceRecording{totalStudents,appearedStudents,
-              passedStudents,classAverage,
-              gradeDistribution{O,Aplus,A,Bplus,B,C,D}}
-  §2.7      (derived from §2.5 + §2.6)
-  §2.8      cabAnalysis{analysisNotes}   — can override attained
-  §2.9      coAttainmentMapping | coAttainmentMappingHtml
-  §2.10     feedback[] | feedbackHtml
-  §4.1/4.2  otherDetails{assignmentDetails, academicIntegrity}
-
-Design rules
-------------
-1. Section slice first, then parse — no bleed.
-2. Table-first, text fallback, regex-verified.
-3. HTML builders mirror the React preview 1:1.
-4. Wrapped rows merged before parse.
-5. Collapsed grids ("CO132--1------121-") re-expanded.
-6. **COs: merge table + text** (PDF cuts multi-page CO tables in half).
-7. **Lesson Plan: scan ALL pages for class tables**, then re-construct any
-   leftover numeric stream (pages 9-10 of UE26CS1102 are a wall of numbers).
-8. **Performance: lock the "B Grade" row** — do not overwrite with 11-number
-   fallback once it has filled all 7 grades.
-9. **Attainment targets: state machine** handles rowspan + page-break (CO6 is
-   cut off mid-row in the source PDF).
-10. **totalHours**: prefer "Contact Hours" over "Hours/Week".
-11. **LaTeX unescape**: `\(40\%\)` → `(40%)`.
-12. **Online resources**: split on `(Online Resource N)` markers when the PDF
-    flattens bullets onto one line.
+Changes in this revision
+------------------------
+ 1. Lesson plan: every table on every page is scanned (header-less continuation
+    tables included). Rows are merged by class number. Missing classes are
+    recovered from the flattened numeric stream (e.g. "495Clocking and Timing...")
+    with a sequential class-number scanner. Deduped, sorted, and counted.
+ 2. Course outcomes: table AND text parsers always run and are merged by CO code
+    (longest description wins). The "After undergoing..." preamble is stripped.
+ 3. Identity: "Contact Hours" -> totalHours; "Hours/Week" only as a fallback.
+    Text-regex extraction is preferred over flattened table cells.
+ 4. Attainment targets: state machine over rows (rowspan + page-break safe), text
+    fallback, and attained values that are never left all-zero when grades exist.
+ 5. Performance: the "B Grade ..." row is locked; 4-int and 5-int counts rows are
+    supported; the 11-number and per-grade fallbacks only fill missing slots.
+ 6. Online resources: newline after every "(Online Resource N)" marker, deduped.
+ 7. LaTeX unescape runs inside clean_text().
+ 8. Matrices: header-only tables return default_matrix(); `mapping_empty` is reported.
+ 9. `_diagnostics` and `warnings` on every CD, and aggregated at top level.
+10. Table extraction: 4-strategy per-page fallback; page numbers stripped.
 """
 
 from __future__ import annotations
@@ -65,7 +40,6 @@ import json
 import traceback
 from pathlib import Path
 
-# UTF-8 stdout
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -101,24 +75,33 @@ except Exception as _imp_err:
 # 1.  UTILITIES
 # ═════════════════════════════════════════════════════════════════════════════
 
-_WS_RE       = re.compile(r'\s+')
-_PAGE_NO_RE  = re.compile(r'^\s*\d+\s*\|\s*Page\s*$|^\s*\d+/\d+\s*$|^\s*Page\s+\d+\s*$', re.I)
-_CO_RE       = re.compile(r'\bCO\s*(\d{1,2})\b', re.I)
-_URL_RE      = re.compile(r'https?://[^\s<>"\']+', re.I)
+_WS_RE = re.compile(r'\s+')
+# Whole-line page markers: "3|Page", "14 | Page", "3/10", "Page 3"
+_PAGE_NO_RE = re.compile(
+    r'^\s*\d+\s*\|\s*Page\s*$|^\s*\d+/\d+\s*$|^\s*Page\s+\d+\s*$', re.I)
+# Page markers glued to the end of a text line
+_PAGE_INLINE_RE = re.compile(r'\s*\b\d{1,3}\s*\|\s*Page\b', re.I)
+_CO_RE = re.compile(r'\bCO\s*(\d{1,2})\b', re.I)
+_URL_RE = re.compile(r'https?://[^\s<>"\']+', re.I)
 
-# LaTeX escapes produced by Word/MathML → plain text
+# LaTeX escapes produced by Word/MathML -> plain text. Order matters.
 _LATEX_ESC = [
+    (re.compile(r'\\text\{([^}]*)\}'), r'\1'),
+    (re.compile(r'\\(?:left|right)\b'), ''),
+    (re.compile(r'\\geq?\b'), '≥'),
+    (re.compile(r'\\leq?\b'), '≤'),
+    (re.compile(r'\\times\b'), '×'),
     (re.compile(r'\\\(|\\\)|\\\[|\\\]'), ''),
     (re.compile(r'\\%'), '%'),
     (re.compile(r'\\&'), '&'),
     (re.compile(r'\\_'), '_'),
     (re.compile(r'\\\{'), '{'),
     (re.compile(r'\\\}'), '}'),
-    (re.compile(r'\\text\{([^}]*)\}'), r'\1'),
 ]
 
 
 def unescape_latex(t: str) -> str:
+    """Strip \\( \\) \\[ \\] \\% \\& \\_ \\{ \\} and \\text{...} wrappers."""
     for pat, repl in _LATEX_ESC:
         t = pat.sub(repl, t)
     return t
@@ -131,11 +114,12 @@ def clean_text(t) -> str:
 
 
 def strip_page_noise(text: str) -> str:
+    """Remove '3|Page' / '14 | Page' style markers before section slicing."""
     out = []
     for ln in (text or "").splitlines():
         if _PAGE_NO_RE.match(ln.strip()):
             continue
-        out.append(ln)
+        out.append(_PAGE_INLINE_RE.sub('', ln))
     return "\n".join(out)
 
 
@@ -179,7 +163,7 @@ def dedupe(items):
 
 
 def merge_wrapped_rows(rows):
-    """Merge rows whose first cell is empty (Word wrap artifact)."""
+    """Merge rows whose first cell is empty (Word wrap / rowspan artifact)."""
     merged = []
     for row in rows:
         cells = [clean_text(c) for c in row]
@@ -287,9 +271,10 @@ PO_HEADERS = [
 MATRIX_CORNER = "CO\\PO"
 
 SCHEDULE_WEEKS = ["0-4", "5-8", "9", "10-13", "14-16", "17", "18-20", "21-26"]
-SCHEDULE_ROWS  = ["quiz", "assignment", "pbl", "term1", "term2", "makeup"]
-GRADE_KEYS     = ["O", "Aplus", "A", "Bplus", "B", "C", "D"]
-BLOOM          = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"]
+SCHEDULE_ROWS = ["quiz", "assignment", "pbl", "term1", "term2", "makeup"]
+GRADE_KEYS = ["O", "Aplus", "A", "Bplus", "B", "C", "D"]
+BLOOM = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"]
+DEFAULT_CLASS_COUNT = 60
 
 
 def default_matrix():
@@ -298,11 +283,15 @@ def default_matrix():
     ]
 
 
+def matrix_has_data(m) -> bool:
+    return bool(m) and len(m) > 1 and any(
+        str(c).strip() not in ("", "-") for r in m[1:] for c in r[1:]
+    )
+
+
 def default_assessment_row(i):
-    return {
-        "co": f"CO{i}", "q1": 0, "hw": 0, "pbl": 0,
-        "term1": 0, "term2": 0, "total": 0,
-    }
+    return {"co": f"CO{i}", "q1": 0, "hw": 0, "pbl": 0,
+            "term1": 0, "term2": 0, "total": 0}
 
 
 def default_attainment_row(i):
@@ -374,9 +363,9 @@ def make_empty_cd():
 
 _TBL = ('style="border-collapse:collapse;width:100%;font-size:13px;'
         'font-family:Arial,sans-serif;margin-bottom:10px" border="1"')
-_TH  = 'style="padding:8px 10px;background:#f3f4f6;text-align:left"'
+_TH = 'style="padding:8px 10px;background:#f3f4f6;text-align:left"'
 _THC = 'style="padding:8px 10px;background:#f3f4f6;text-align:center;font-weight:bold"'
-_TD  = 'style="padding:8px 10px;text-align:center"'
+_TD = 'style="padding:8px 10px;text-align:center"'
 _TDL = 'style="padding:8px 10px;text-align:left;vertical-align:top"'
 
 
@@ -385,10 +374,10 @@ def build_course_outcomes_html(cos):
                    for i in range(1, CO_COUNT + 1)]
     html = (
         f'<table {_TBL}><thead><tr>'
-        f'<th {_THC} style="width:70px">COs</th>'
+        f'<th {_THC}>COs</th>'
         f'<th {_TH}>Course Outcomes</th>'
         f'<th {_TH}>Real Life Application</th>'
-        f'<th {_TH} style="width:130px">Bloom\'s Level</th>'
+        f'<th {_THC}>Bloom\'s Level</th>'
         f'</tr></thead><tbody>'
     )
     for co in rows:
@@ -414,10 +403,7 @@ def build_outcome_map_html(matrix):
         html += "<tr>"
         for ci, cell in enumerate(row):
             html += f'<td {_TD}>'
-            if ci == 0:
-                html += f'<strong>{escape_html(cell)}</strong>'
-            else:
-                html += escape_html(cell)
+            html += f'<strong>{escape_html(cell)}</strong>' if ci == 0 else escape_html(cell)
             html += '</td>'
         html += "</tr>"
     return html + "</tbody></table>"
@@ -432,8 +418,7 @@ def build_assessment_weight_html(rows):
 
     cols = ["q1", "hw", "pbl", "term1", "term2", "total"]
     headers = ["Quiz", "Assignment / HW", "PBL", "Term-1 Exam", "Term-2 Exam", "Total"]
-    html = f'<table {_TBL}><thead><tr>'
-    html += f'<th {_THC}>COs / Weights</th>'
+    html = f'<table {_TBL}><thead><tr><th {_THC}>COs / Weights</th>'
     for h in headers:
         html += f'<th {_THC}>{h}</th>'
     html += "</tr></thead><tbody>"
@@ -444,8 +429,7 @@ def build_assessment_weight_html(rows):
             html += f'<td {_TD}>{v if v else ""}</td>'
         html += "</tr>"
     html += (
-        f'</tbody><tfoot><tr>'
-        f'<td {_TD}><strong>Σ Weights</strong></td>'
+        f'</tbody><tfoot><tr><td {_TD}><strong>Σ Weights</strong></td>'
         + "".join(f'<td {_TD}><strong>{col(c)}</strong></td>' for c in cols)
         + "</tr></tfoot></table>"
     )
@@ -476,7 +460,7 @@ def build_teaching_html(rows):
         )
     html += (
         f'</tbody><tfoot><tr>'
-        f'<td colspan="6" {_TD} style="text-align:right"><strong>Total hours</strong></td>'
+        f'<td colspan="6" style="padding:8px 10px;text-align:right"><strong>Total hours</strong></td>'
         f'<td {_TD}><strong>{total_h}</strong></td>'
         f'</tr></tfoot></table>'
     )
@@ -506,14 +490,11 @@ def build_schedule_html(schedule):
 def build_attainment_targets_html(rows):
     if not rows:
         rows = [default_attainment_row(i) for i in range(1, CO_COUNT + 1)]
-
     html = (
         f'<table {_TBL}><thead><tr>'
-        f'<th {_THC} style="width:70px">COs</th>'
-        f'<th {_THC} style="width:60px">Band</th>'
+        f'<th {_THC}>COs</th><th {_THC}>Band</th>'
         f'<th {_TH}>Outcomes - Targeted</th>'
-        f'<th {_THC} style="width:90px">Target %</th>'
-        f'<th {_THC} style="width:110px">Attained</th>'
+        f'<th {_THC}>Target %</th><th {_THC}>Attained</th>'
         f'</tr></thead><tbody>'
     )
     bands = [
@@ -523,25 +504,16 @@ def build_attainment_targets_html(rows):
     ]
     for r in rows:
         for i, (label, tkey, tgkey, atkey) in enumerate(bands):
-            if i == 0:
-                html += (
-                    f'<tr>'
-                    f'<td {_TD} rowspan="3"><strong>{escape_html(r.get("co",""))}</strong></td>'
-                    f'<td {_TD}>{label}</td>'
-                    f'<td {_TDL}>{escape_html(r.get(tkey,""))}</td>'
-                    f'<td {_TD}>{escape_html(r.get(tgkey,""))}</td>'
-                    f'<td {_TD}>{escape_html(r.get(atkey,""))}</td>'
-                    f'</tr>'
-                )
-            else:
-                html += (
-                    f'<tr>'
-                    f'<td {_TD}>{label}</td>'
-                    f'<td {_TDL}>{escape_html(r.get(tkey,""))}</td>'
-                    f'<td {_TD}>{escape_html(r.get(tgkey,""))}</td>'
-                    f'<td {_TD}>{escape_html(r.get(atkey,""))}</td>'
-                    f'</tr>'
-                )
+            co_cell = (f'<td {_TD} rowspan="3"><strong>{escape_html(r.get("co",""))}</strong></td>'
+                       if i == 0 else "")
+            html += (
+                f'<tr>{co_cell}'
+                f'<td {_TD}>{label}</td>'
+                f'<td {_TDL}>{escape_html(r.get(tkey,""))}</td>'
+                f'<td {_TD}>{escape_html(r.get(tgkey,""))}</td>'
+                f'<td {_TD}>{escape_html(r.get(atkey,""))}</td>'
+                f'</tr>'
+            )
     return html + "</tbody></table>"
 
 
@@ -554,22 +526,19 @@ def build_feedback_html(rows):
         rows = [{"co": f"CO{i}", "feedback": ""} for i in range(1, CO_COUNT + 1)]
     html = (
         f'<table {_TBL}><thead><tr>'
-        f'<th {_THC} style="width:80px">COs</th>'
-        f'<th {_TH}>Feedback to faculty member</th>'
+        f'<th {_THC}>COs</th><th {_TH}>Feedback to faculty member</th>'
         f'</tr></thead><tbody>'
     )
     for r in rows:
         html += (
-            f'<tr>'
-            f'<td {_TD}><strong>{escape_html(r.get("co",""))}</strong></td>'
-            f'<td {_TDL}>{escape_html(r.get("feedback",""))}</td>'
-            f'</tr>'
+            f'<tr><td {_TD}><strong>{escape_html(r.get("co",""))}</strong></td>'
+            f'<td {_TDL}>{escape_html(r.get("feedback",""))}</td></tr>'
         )
     return html + "</tbody></table>"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 5.  COURSE DETAILS (identity) — includes Contact Hours → totalHours
+# 5.  COURSE DETAILS (identity) — Contact Hours -> totalHours
 # ═════════════════════════════════════════════════════════════════════════════
 
 IDENTITY_FIELDS = {
@@ -601,24 +570,26 @@ def _all_aliases():
             yield v
 
 
-def parse_identity(section_text: str, tables: list, data: dict) -> None:
-    # ── 1) "Label Value" regex (text is more reliable than flattened tables)
+def parse_identity(section_text: str, tables: list, data: dict) -> str:
+    """Fill identity fields. Returns "contact_hours" when totalHours came from
+    the Contact Hours label, otherwise ""."""
+    hours_source = ""
     stop_re = re.compile(
-        r'\b(' + '|'.join(re.escape(s) for s in _STOP_LABELS) + r')\b',
-        re.IGNORECASE,
-    )
-    text_with_breaks = _SECTION_PATTERNS["course_details"].sub(
-        '', section_text, count=1
-    )
+        r'\b(' + '|'.join(re.escape(s) for s in _STOP_LABELS) + r')\b', re.IGNORECASE)
+    text = _SECTION_PATTERNS["course_details"].sub('', section_text, count=1)
+
+    # 1) Text-regex extraction FIRST (more reliable than flattened table cells).
+    #    The lookahead stops "program" from swallowing "Program Code ..." etc.
     for field, aliases in IDENTITY_FIELDS.items():
         if data.get(field):
             continue
         for alias in aliases:
             pat = re.compile(
-                r'\b' + re.escape(alias) + r'\s*[:：]?\s*([A-Z0-9][^\n]{0,180})',
+                r'\b' + re.escape(alias) +
+                r'(?!\s*(?:code|id|name|member|offering)\b)\s*[:：]?\s*([A-Z0-9][^\n]{0,180})',
                 re.IGNORECASE,
             )
-            m = pat.search(text_with_breaks)
+            m = pat.search(text)
             if not m:
                 continue
             val = clean_text(m.group(1))
@@ -629,22 +600,23 @@ def parse_identity(section_text: str, tables: list, data: dict) -> None:
                 data[field] = val
                 break
 
-    # ── 2) Contact Hours → totalHours (60, NOT 5)
-    m = re.search(r'\bContact\s+Hours?\s*[:：]?\s*(\d+)', text_with_breaks, re.I)
+    # 2) Contact Hours -> totalHours (60, NOT Hours/Week = 5)
+    m = re.search(r'\bContact\s+Hours?\s*[:：]?\s*(\d+)', text, re.I)
     if m:
         data["totalHours"] = safe_int(m.group(1))
-    # Also look in tables
+        hours_source = "contact_hours"
     if not data.get("totalHours"):
         for tbl in tables:
             flat = [clean_text(c) for row in tbl for c in row if c is not None]
             for i, c in enumerate(flat[:-1]):
-                if re.fullmatch(r'contact\s+hours?', c, re.I):
+                if re.fullmatch(r'contact\s+hours?', c, re.I) and re.search(r'\d', flat[i + 1]):
                     data["totalHours"] = safe_int(flat[i + 1])
+                    hours_source = "contact_hours"
                     break
             if data.get("totalHours"):
                 break
 
-    # ── 3) Sliding-window table extraction as backup for missing fields
+    # 3) Table sliding-window as a backup for anything still missing
     if any(not data.get(f) for f in IDENTITY_FIELDS):
         pairs = {}
         for tbl in tables:
@@ -669,90 +641,96 @@ def parse_identity(section_text: str, tables: list, data: dict) -> None:
                 if data.get(field):
                     break
 
-    # ── 4) Cleanup
-    data["courseCode"]  = re.sub(r'\s+', '', data.get("courseCode", ""))
+    data["courseCode"] = re.sub(r'\s+', '', data.get("courseCode", ""))
     data["courseTitle"] = clean_text(data.get("courseTitle", ""))
-
-    # ── 5) If credits block says 4 3 0 2 and hours/week=5, credits.total = 4
-    if not data["credits"].get("total") and not data["credits"].get("L"):
-        # parse from "Credits L T P Hours/Week" line
-        pass
+    return hours_source
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 6.  COURSE SIZE
 # ═════════════════════════════════════════════════════════════════════════════
 
-def parse_course_size(section_text: str, tables: list, data: dict) -> None:
+def parse_course_size(section_text: str, tables: list, data: dict) -> str:
+    """Parse credits. Returns "hours_per_week" if Hours/Week had to be used as
+    totalHours (only when Contact Hours was missing), else ""."""
+    source = ""
+
+    def _set(nums):
+        nonlocal source
+        # "Credits L T P Hours/Week" -> "4 3 0 2 5"
+        data["credits"] = {"total": nums[0], "L": nums[1], "T": nums[2], "P": nums[3]}
+        if not data.get("totalHours"):
+            data["totalHours"] = nums[4]
+            source = "hours_per_week"
+
     for tbl in tables:
         joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
         if "hours/week" not in joined and "hour/week" not in joined:
             continue
         for row in tbl:
-            nums = [safe_int(c) for c in row if c is not None and re.fullmatch(r'\d+', clean_text(c))]
+            nums = [safe_int(c) for c in row
+                    if c is not None and re.fullmatch(r'\d+', clean_text(c))]
             if len(nums) >= 5:
-                # Order: L T P Hours/Week  (total = L, no wait the header is Credits L T P Hours/Week)
-                # Actual values from PDF: "4 3 0 2 5"
-                # Interpretation: Credits=4, L=3, T=0, P=2, Hours/Week=5
-                data["credits"] = {"total": nums[0], "L": nums[1], "T": nums[2], "P": nums[3]}
-                # Only use hours/week as totalHours if Contact Hours missing
-                if not data.get("totalHours"):
-                    data["totalHours"] = nums[4]
-                return
+                _set(nums)
+                return source
 
     m = re.search(r'Credits\s+L\s+T\s+P\s+Hours?/?Week\s*([\d\s]+)', section_text, re.I)
     if m:
         nums = [safe_int(x) for x in m.group(1).split()]
         if len(nums) >= 5:
-            data["credits"] = {"total": nums[0], "L": nums[1], "T": nums[2], "P": nums[3]}
+            _set(nums)
 
     m = re.search(r'Total\s+.*?hours?\s*[:：]?\s*(\d+)', section_text, re.I)
     if m and not data.get("totalHours"):
         data["totalHours"] = safe_int(m.group(1))
+        source = "fallback"
+    return source
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 7.  COURSE OUTCOMES — MERGE table + text (page break in source PDF)
+# 7.  COURSE OUTCOMES — ALWAYS MERGE table + text
 # ═════════════════════════════════════════════════════════════════════════════
+
+_PREAMBLE_RE = re.compile(
+    r'After\s+undergoing\s+this\s+course[^:.\n]*[:.]?\s*', re.I)
+
+
+def _strip_preamble(s: str) -> str:
+    return _PREAMBLE_RE.sub('', s or '', count=1).strip()
+
 
 def parse_course_outcomes(section_text: str, tables: list, data: dict) -> None:
+    section_text = _strip_preamble(clean_text(section_text))
     from_table = _cos_from_table(tables)
-    from_text  = _cos_from_text(section_text)
+    from_text = _cos_from_text(section_text)
 
-    # Merge by CO code, preferring the longest description
     merged = {}
     for src in (from_table, from_text):
         for co in src:
             code = co["code"]
-            existing = merged.get(code)
-            if not existing:
+            cur = merged.get(code)
+            if not cur:
                 merged[code] = dict(co)
-            else:
-                # Fill blanks, prefer longer desc
-                if len(co.get("description", "")) > len(existing.get("description", "")):
-                    existing["description"] = co["description"]
-                for k in ("application", "bloom"):
-                    if not existing.get(k) and co.get(k):
-                        existing[k] = co[k]
+                continue
+            if len(co.get("description", "")) > len(cur.get("description", "")):
+                cur["description"] = co["description"]
+            for k in ("application", "bloom"):
+                if len(co.get(k, "")) > len(cur.get(k, "")):
+                    cur[k] = co[k]
 
-    # Sort by CO number
     final = []
     for i in range(1, CO_COUNT + 1):
-        co = f"CO{i}"
-        final.append(merged.get(co, {"code": co, "description": "", "application": "", "bloom": ""}))
-
-    # Clean up "After undergoing..." lead-in
-    for co in final:
-        co["description"] = re.sub(
-            r'^(?:After\s+undergoing[^.]*\.\s*)', '', co["description"], flags=re.I,
-        ).strip()
+        code = f"CO{i}"
+        co = merged.get(code, {"code": code, "description": "", "application": "", "bloom": ""})
+        co["description"] = _strip_preamble(co.get("description", ""))
+        final.append(co)
 
     data["courseOutcomes"] = final
     data["courseOutcomesHtml"] = build_course_outcomes_html(final)
 
 
 def _cos_from_table(tables):
-    """Walk ALL tables for a 'CO' header, merge rows."""
+    """Walk ALL tables with a CO + Bloom header and merge their rows."""
     cos = {}
     for tbl in tables:
         if not tbl or len(tbl) < 2:
@@ -760,7 +738,6 @@ def _cos_from_table(tables):
         joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
         if "course outcome" not in joined and "bloom" not in joined:
             continue
-        # Try every row as a potential header
         header_idx = None
         for i, r in enumerate(tbl):
             hs = [clean_text(c).lower() for c in r]
@@ -773,67 +750,60 @@ def _cos_from_table(tables):
         header = [clean_text(c).lower() for c in tbl[header_idx]]
         idx = {}
         for i, h in enumerate(header):
-            if ("co" in h and ("s" in h or "." in h or h == "co")):
-                idx["co"] = i
-            elif "outcome" in h:
-                idx["desc"] = i
+            if "bloom" in h:
+                idx["bloom"] = i
             elif "application" in h or "real life" in h:
                 idx["app"] = i
-            elif "bloom" in h:
-                idx["bloom"] = i
+            elif "outcome" in h:
+                idx["desc"] = i
+            elif h in ("co", "cos", "co.", "cos."):
+                idx["co"] = i
         if "co" not in idx:
-            continue
+            idx["co"] = 0
 
-        for row in tbl[header_idx + 1:]:
+        def cell(cells, key):
+            i = idx.get(key)
+            return cells[i] if i is not None and i < len(cells) else ""
+
+        for row in merge_wrapped_rows(tbl[header_idx + 1:]):
             cells = [clean_text(c) for c in row]
-            if not any(cells):
-                continue
-            co_cell = cells[idx["co"]] if idx["co"] < len(cells) else ""
-            m = _CO_RE.search(co_cell)
-            if not m:
-                # Try other cells (CO may be packed with outcome text)
-                for c in cells:
-                    m = _CO_RE.search(c)
-                    if m:
-                        break
+            m = _CO_RE.search(cell(cells, "co")) or next(
+                (mm for mm in (_CO_RE.search(c) for c in cells) if mm), None)
             if not m:
                 continue
             code = f"CO{int(m.group(1))}"
-            desc = cells[idx["desc"]] if idx.get("desc") is not None and idx["desc"] < len(cells) else ""
-            app  = cells[idx["app"]]  if idx.get("app")  is not None and idx["app"]  < len(cells) else ""
-            bloom = cells[idx["bloom"]] if idx.get("bloom") is not None and idx["bloom"] < len(cells) else ""
-            existing = cos.get(code)
-            if not existing:
-                cos[code] = {"code": code, "description": desc, "application": app, "bloom": bloom}
+            entry = {"code": code, "description": cell(cells, "desc"),
+                     "application": cell(cells, "app"), "bloom": cell(cells, "bloom")}
+            cur = cos.get(code)
+            if not cur:
+                cos[code] = entry
             else:
-                if len(desc) > len(existing["description"]):
-                    existing["description"] = desc
-                if not existing["application"] and app:
-                    existing["application"] = app
-                if not existing["bloom"] and bloom:
-                    existing["bloom"] = bloom
+                for k in ("description", "application", "bloom"):
+                    if len(entry[k]) > len(cur[k]):
+                        cur[k] = entry[k]
     return list(cos.values())
 
 
 def _cos_from_text(text):
-    """Handle prose COs ('CO1 ... CO2 ...'), used when table extraction truncates."""
-    t = clean_text(text)
+    """Prose COs ('CO1 ... CO2 ...') — used because table extraction truncates
+    multi-page CO tables."""
+    t = _strip_preamble(clean_text(text))
     if not t:
         return []
-    # Strip leading "After undergoing..." preamble
     first = re.search(r'\bCO\s*1\b', t, re.I)
     if not first:
         return []
     t = t[first.start():]
 
     bloom_re = re.compile(r'\b(' + "|".join(BLOOM) + r')\b', re.I)
-    out = []
-    # Walk CO occurrences in order
     matches = list(_CO_RE.finditer(t))
+    out, seen = [], set()
     for i, m in enumerate(matches):
-        start = m.end()
+        code = f"CO{int(m.group(1))}"
+        if code in seen:
+            continue
         end = matches[i + 1].start() if i + 1 < len(matches) else len(t)
-        body = clean_text(t[start:end])
+        body = clean_text(t[m.end():end])
         if not body:
             continue
         bloom_match = None
@@ -843,55 +813,55 @@ def _cos_from_text(text):
         if bloom_match:
             bloom = bloom_match.group(1).title()
             before = body[:bloom_match.start()].strip()
-            # Split desc / app on sentence boundary
             parts = re.split(r'(?<=[.!?])\s+', before, maxsplit=1)
             if len(parts) == 2:
                 desc, app = parts[0].strip(), parts[1].strip()
             else:
                 desc = before
+        seen.add(code)
         out.append({
-            "code": f"CO{int(m.group(1))}",
+            "code": code,
             "description": re.sub(r'\s+', ' ', desc).strip(" .;:"),
             "application": re.sub(r'\s+', ' ', app).strip(" .;:"),
             "bloom": bloom,
         })
-    # Dedupe
-    seen = set()
-    uniq = []
-    for co in out:
-        if co["code"] in seen:
-            continue
-        seen.add(co["code"])
-        uniq.append(co)
-    return uniq
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 8.  OUTCOME MAP (CO × PO/PSO)
+# 8.  OUTCOME MAP (CO x PO/PSO)  — empty-safe
 # ═════════════════════════════════════════════════════════════════════════════
+
+_PO_HEADER_RE = re.compile(r'\bP(?:S)?O\s*\d*\b', re.I)
+
 
 def parse_outcome_map(section_text: str, tables: list, data: dict) -> None:
-    matrix = _matrix_from_table(tables) or _matrix_from_text(section_text)
+    matrix = _matrix_from_table(tables, 0) or _matrix_from_text(section_text)
     if not matrix or len(matrix) < 2:
         matrix = default_matrix()
     data["outcomeMap"]["matrix"] = matrix
     data["outcomeMapHtml"] = build_outcome_map_html(matrix)
 
 
-def _matrix_from_table(tables):
-    for tbl in tables:
-        if not tbl or len(tbl) < 2:
-            continue
-        joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
-        if "co" not in joined or ("po" not in joined and "pso" not in joined):
-            continue
+def _matrix_from_table(tables, nth=0):
+    """Return the nth CO x PO table found in the PDF (0 -> §1.5, 1 -> §2.9).
 
+    A table that has PO/PSO headers but no CO data rows yields default_matrix()
+    (this is the UE26CS1102 case) rather than raising or returning [].
+    """
+    candidates = []
+    for tbl in tables:
+        if not tbl or len(tbl) < 1:
+            continue
         raw = [[clean_text(c) for c in row] for row in tbl]
+        joined = " ".join(" ".join(r) for r in raw)
+        if not _PO_HEADER_RE.search(joined) or not re.search(r'\bCO\b|\bCO\d', joined, re.I):
+            continue
 
         header_idx = None
         for i, r in enumerate(raw):
             j = " ".join(r).upper().replace(" ", "")
-            if "CO" in j and ("PO1" in j or "PO" in j):
+            if "CO" in j and "PO" in j:
                 header_idx = i
                 break
         if header_idx is None:
@@ -901,14 +871,14 @@ def _matrix_from_table(tables):
         po_ct, pso_ct = 1, 1
         for h in raw[header_idx][1:]:
             hu = h.upper().replace(" ", "")
-            if hu in ("PO", "P0") or hu == "":
+            if hu in ("PO", "P0", ""):
                 norm_header.append(f"PO{po_ct}"); po_ct += 1
+            elif hu.startswith("PSO") and hu[3:].isdigit():
+                norm_header.append(f"PSO{int(hu[3:])}"); pso_ct = int(hu[3:]) + 1
             elif hu.startswith("PO") and hu[2:].isdigit():
                 norm_header.append(f"PO{int(hu[2:])}"); po_ct = int(hu[2:]) + 1
             elif hu in ("PSO", "PS"):
                 norm_header.append(f"PSO{pso_ct}"); pso_ct += 1
-            elif hu.startswith("PSO") and hu[3:].isdigit():
-                norm_header.append(f"PSO{int(hu[3:])}"); pso_ct = int(hu[3:]) + 1
             else:
                 norm_header.append(h)
 
@@ -919,34 +889,21 @@ def _matrix_from_table(tables):
             if not co_m:
                 continue
             co_code = f"CO{int(co_m.group(1))}"
-
             non_empty = [c for c in r if c]
             if len(non_empty) <= 2:
-                # Collapsed grid — explode chars
-                packed = re.sub(r'\s+', '', joined_r)
-                payload = packed[len(co_code.replace("CO", "")) + 2:] if packed.upper().startswith("CO") else packed
-                # Simpler: strip the leading "CO<n>"
-                payload = re.sub(r'^CO\d+', '', joined_r.replace(" ", ""))
+                # Collapsed grid "CO132--1------121-" -> explode char by char
+                payload = re.sub(r'^CO\d+', '', joined_r.replace(" ", ""), flags=re.I)
                 expanded = [co_code] + list(payload)
-                while len(expanded) < len(norm_header):
-                    expanded.append("")
-                matrix.append(expanded[:len(norm_header)])
-                continue
+            else:
+                expanded = [co_code] + [
+                    c for c in r if c and not _CO_RE.fullmatch(c.strip())]
+            expanded += [""] * max(0, len(norm_header) - len(expanded))
+            matrix.append(expanded[:len(norm_header)])
 
-            row_cells = [co_code]
-            for c in r:
-                if not c:
-                    continue
-                if _CO_RE.fullmatch(c.strip()):
-                    continue
-                row_cells.append(c)
-            while len(row_cells) < len(norm_header):
-                row_cells.append("")
-            matrix.append(row_cells[:len(norm_header)])
+        # Headers present, no data rows -> default grid, don't crash.
+        candidates.append(matrix if len(matrix) >= 2 else default_matrix())
 
-        if len(matrix) >= 2:
-            return matrix
-    return []
+    return candidates[nth] if nth < len(candidates) else []
 
 
 def _matrix_from_text(text):
@@ -962,10 +919,7 @@ def _matrix_from_text(text):
         return []
     norm = [MATRIX_CORNER] + [h.replace(" ", "") for h in header[1:]]
     w = max(len(norm), *(len(r) for r in rows))
-    out = []
-    for r in [norm] + rows:
-        out.append((r + [""] * w)[:w])
-    return out
+    return [(r + [""] * w)[:w] for r in [norm] + rows]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -983,18 +937,11 @@ def parse_assessment_weight(section_text: str, tables: list, data: dict) -> None
 
 
 def _aw_2026(section_text, tables, data):
-    """
-    Robust 2026 assessment weight parser. The PDF may present:
-       Row 1: column totals ("Quiz Assignment/HW PBL Term-1 Term-2 Total
-              COs/Weights  10  20  20  25  25  100")
-       Rows:  CO1 10 10   (Quiz=10, hw=0, pbl=0, t1=0, t2=0, total=10)
-    """
     rows_by_co = {}
     for tbl in tables:
         joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
         if "quiz" not in joined or "total" not in joined:
             continue
-        # Find header row index
         header_idx = None
         for i, r in enumerate(tbl):
             hs = [clean_text(c).lower() for c in r]
@@ -1003,7 +950,6 @@ def _aw_2026(section_text, tables, data):
                 break
         if header_idx is None:
             continue
-        # Find CO rows
         for row in tbl[header_idx + 1:]:
             joined_r = " ".join(clean_text(c) for c in row)
             m = _CO_RE.search(joined_r)
@@ -1011,10 +957,8 @@ def _aw_2026(section_text, tables, data):
                 continue
             co = f"CO{int(m.group(1))}"
             nums = re.findall(r'\d+', joined_r[m.end():])
-            # Stop if we hit 6 numbers or end of row
             rows_by_co[co] = [safe_int(n) for n in nums[:6]]
 
-    # Text fallback
     if not rows_by_co:
         for ln in (section_text or "").splitlines():
             m = _CO_RE.search(ln)
@@ -1027,9 +971,7 @@ def _aw_2026(section_text, tables, data):
 
     for i in range(1, CO_COUNT + 1):
         co = f"CO{i}"
-        vals = rows_by_co.get(co, [])
-        padded = (vals + [0] * 6)[:6]
-        quiz, hw, pbl, t1, t2, total = padded
+        quiz, hw, pbl, t1, t2, total = (rows_by_co.get(co, []) + [0] * 6)[:6]
         if total == 0:
             total = quiz + hw + pbl + t1 + t2
         data["assessmentWeight"][i - 1] = {
@@ -1065,146 +1007,183 @@ def _aw_2024(tables, data):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 10.  TEACHING PLAN — scan ALL pages, not just §2.1 slice
+# 10.  LESSON PLAN — scan ALL pages' tables, merge by class number
 # ═════════════════════════════════════════════════════════════════════════════
 
-def parse_teaching(section_text: str, tables: list, data: dict) -> None:
+def _teaching_header_map(header):
+    h = [clean_text(c).lower() for c in header]
+
+    def find(pred):
+        return next((i for i, x in enumerate(h) if pred(x)), None)
+
+    return {
+        "class":    find(lambda x: "class" in x),
+        "unit":     find(lambda x: "unit" in x),
+        "topic":    find(lambda x: "topic" in x),
+        "focus":    find(lambda x: "focus" in x),
+        "activity": find(lambda x: "activity" in x),
+        "co":       find(lambda x: x.startswith("co") and ("cover" in x or x in ("co", "cos", "co(s)"))),
+        "hours":    find(lambda x: "hour" in x or x in ("hrs", "hr")),
+    }
+
+
+def _merge_class(by_class, n, entry):
+    cur = by_class.get(n)
+    if not cur:
+        by_class[n] = entry
+        return
+    for k in ("unitNo", "topic", "teachingFocus", "activity", "cosCovered"):
+        if len(entry.get(k, "")) > len(cur.get(k, "")):
+            cur[k] = entry[k]
+
+
+def _ingest_teaching_rows(rows, idx, by_class):
+    added = 0
+    for r in merge_wrapped_rows(rows):
+        cells = r + [""] * max(0, 8 - len(r))
+
+        def g(key):
+            i = idx.get(key)
+            return cells[i] if i is not None and i < len(cells) else ""
+
+        class_no = g("class")
+        if not re.fullmatch(r'\d{1,3}', class_no or ""):
+            continue
+        n = int(class_no)
+        hrs = safe_int(g("hours"), 1) if idx.get("hours") is not None else 1
+        _merge_class(by_class, n, {
+            "number": str(n), "unitNo": g("unit"), "topic": g("topic"),
+            "teachingFocus": g("focus"), "activity": g("activity"),
+            "cosCovered": g("co"), "hours": hrs or 1,
+        })
+        added += 1
+    return added
+
+
+def parse_teaching(section_text: str, tables: list, data: dict,
+                   full_text: str = "") -> int:
     """
-    Strategy:
-      1. Walk every table looking for a "Topic" or "Activity" column.
-      2. Merge rows across multiple tables (multi-page Lesson Plan).
-      3. Fallback: parse visible text lines "N U Topic Focus Activity CO"
-      4. Last resort: reconstruct from the numeric stream on pages 9-10.
+    1. Walk every table on every page for a Class + Topic/Activity/Focus header.
+       Header-less continuation tables (same width) reuse the last header map.
+    2. Merge rows by class number.
+    3. Text-line fallback ("N U Topic ...").
+    4. Reconstruct leftovers from the flattened numeric stream.
+    Returns the number of classes recovered.
     """
-    by_class = {}  # class_no -> row
+    by_class = {}
+    last_idx, last_ncols = None, 0
 
     for tbl in tables:
         if not tbl or len(tbl) < 2:
             continue
-        joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
-        # Must have class/topic-like header
-        if not ("class" in joined and ("topic" in joined or "activity" in joined or "focus" in joined)):
-            continue
-
-        # Find header row
-        header_idx = None
+        header_i = None
         for i, r in enumerate(tbl):
             hs = [clean_text(c).lower() for c in r]
-            if any("class" in h for h in hs) and any(("topic" in h or "activity" in h or "focus" in h) for h in hs):
-                header_idx = i
+            if any("class" in h for h in hs) and \
+               any(("topic" in h or "activity" in h or "focus" in h) for h in hs):
+                header_i = i
                 break
-        if header_idx is None:
-            continue
 
-        header = [clean_text(c).lower() for c in tbl[header_idx]]
-        idx = {
-            "class":    next((i for i, h in enumerate(header) if "class" in h), None),
-            "unit":     next((i for i, h in enumerate(header) if "unit" in h), None),
-            "topic":    next((i for i, h in enumerate(header) if "topic" in h), None),
-            "focus":    next((i for i, h in enumerate(header) if "focus" in h), None),
-            "activity": next((i for i, h in enumerate(header) if "activity" in h), None),
-            "co":       next((i for i, h in enumerate(header) if h.startswith("co") and "cover" in h), None),
-        }
-        if idx["class"] is None or idx["topic"] is None:
-            continue
-
-        merged = merge_wrapped_rows(tbl[header_idx + 1:])
-        for r in merged:
-            cells = r + [""] * max(0, 7 - len(r))
-
-            def g(key):
-                i = idx.get(key)
-                return cells[i] if i is not None and i < len(cells) else ""
-
-            class_no = g("class")
-            # Skip header repeats
-            if not class_no or "class" in class_no.lower():
+        if header_i is not None:
+            idx = _teaching_header_map(tbl[header_i])
+            if idx["class"] is None or (idx["topic"] is None and idx["activity"] is None):
                 continue
-            if not re.match(r'^\d+$', class_no):
-                continue
+            last_idx, last_ncols = idx, len(tbl[header_i])
+            _ingest_teaching_rows(tbl[header_i + 1:], idx, by_class)
+        elif last_idx is not None:
+            # Continuation table on the next page: same column count, numeric class col
+            ncols = max(len(r) for r in tbl)
+            ci = last_idx["class"]
+            numeric = sum(1 for r in tbl if ci < len(r) and re.fullmatch(r'\d{1,3}', clean_text(r[ci])))
+            if ncols == last_ncols and numeric >= 2:
+                _ingest_teaching_rows(tbl, last_idx, by_class)
 
-            by_class[safe_int(class_no)] = {
-                "number": class_no,
-                "unitNo": g("unit"),
-                "topic": g("topic"),
-                "teachingFocus": g("focus"),
-                "activity": g("activity"),
-                "cosCovered": g("co"),
-                "hours": safe_int(g("unit")) and 1 or 1,  # 1 hour per class default
-            }
-
-    # Text fallback — try "N U Topic Focus Activity CO" pattern
+    # Text fallback
     if not by_class:
         for ln in (section_text or "").splitlines():
             m = re.match(r'^(\d{1,3})\s+(\d)\s+(.+)$', ln.strip())
             if not m:
                 continue
-            class_no = safe_int(m.group(1))
-            unit_no = m.group(2)
-            rest = m.group(3)
-            parts = re.split(r'\s{2,}', rest)
+            n = safe_int(m.group(1))
+            parts = re.split(r'\s{2,}', m.group(3))
             if len(parts) >= 4:
-                topic, focus, activity, co = parts[0], parts[1], parts[2], parts[3]
+                topic, focus, activity, co = parts[:4]
             elif len(parts) == 3:
                 topic, activity, co = parts
                 focus = ""
             else:
-                topic, focus, activity, co = rest, "", "", ""
-            by_class[class_no] = {
-                "number": str(class_no), "unitNo": unit_no,
-                "topic": topic, "teachingFocus": focus,
-                "activity": activity, "cosCovered": co, "hours": 1,
-            }
+                topic, focus, activity, co = m.group(3), "", "", ""
+            _merge_class(by_class, n, {
+                "number": str(n), "unitNo": m.group(2), "topic": topic,
+                "teachingFocus": focus, "activity": activity,
+                "cosCovered": co, "hours": 1,
+            })
 
-    # Reconstruct from the numeric stream when the PDF wall-of-numbers case is detected.
-    # In the source, classes 49-60 appear as "495Clocking..." etc. on page 11.
-    if not by_class or len(by_class) < CO_COUNT:
-        _reconstruct_from_numeric_stream(section_text, by_class)
+    expected = min(max(data.get("totalHours") or 0, DEFAULT_CLASS_COUNT if not data.get("totalHours") else 0), 200)
+    expected = expected or DEFAULT_CLASS_COUNT
 
-    # Sort by class number and fill holes
-    final = []
-    max_class = max(by_class.keys()) if by_class else 0
-    for n in range(1, max_class + 1):
-        if n in by_class:
-            final.append(by_class[n])
+    if len(by_class) < expected:
+        _reconstruct_from_numeric_stream(section_text, by_class, expected)
+    if len(by_class) < expected and full_text:
+        start = 0
+        m = re.search(r'Lesson\s+Plan', full_text, re.I)
+        if m:
+            start = m.start()
+        _reconstruct_from_numeric_stream(full_text[start:], by_class, expected)
+
+    final = [by_class[n] for n in sorted(by_class)]
     data["teaching"] = final
     data["teachingHtml"] = build_teaching_html(final)
+    return len(final)
 
 
-def _reconstruct_from_numeric_stream(text, by_class):
+def _reconstruct_from_numeric_stream(text, by_class, max_class=DEFAULT_CLASS_COUNT):
     """
-    The UE26CS1102 PDF flattens the lesson plan into page 11 as:
-       495Clocking and TimingTiming diagramsTiming analysis5505Lab Experiment 11...
-    where every class begins with a 2-digit number and ends with a CO like "5".
+    Recover classes from flattened text such as
+        495Clocking and TimingTiming diagramsTiming analysis5505Lab Experiment 1...
+    Each class is  <class-no><unit-digit><Topic...><CO-digits>  with no
+    separators. We look for class numbers IN ORDER (1, 2, 3 ...) with a moving
+    cursor, so a CO digit glued in front of the next class number cannot confuse
+    the scan (e.g. '...analysis5' + '50' + '5' + 'Lab').
+    Only classes missing from by_class are added.
     """
     if not text:
-        return
-    # Find chunks that look like "NN<text><CO>"
-    # Split by 2-digit class boundaries followed by text
-    blob = clean_text(text)
-    # Pattern: (\d{2}) then unit digit then hours digit then topic...
-    for m in re.finditer(
-        r'(\d{1,2})(\d)(\d)?\s*([A-Z][^\d]{3,80}?)(?=\d{1,2}\d{1,2}\s*[A-Z]|$)',
-        blob,
-    ):
-        n = safe_int(m.group(1))
-        if n < 1 or n in by_class:
+        return 0
+    blob = re.sub(r'\s+', ' ', text)
+    marks = []  # (class_no, unit, match_start, body_start)
+    pos = 0
+    for n in range(1, max_class + 1):
+        m = re.compile(rf'{n}(\d)\s?(?=[A-Z])').search(blob, pos)
+        if not m:
             continue
-        body = clean_text(m.group(4))
-        # Best-effort split into topic / focus / activity
-        parts = re.split(r'(?<=[a-z])\s+(?=[A-Z])', body, maxsplit=2)
-        topic = parts[0] if parts else body
-        focus = parts[1] if len(parts) > 1 else ""
-        activity = parts[2] if len(parts) > 2 else ""
+        marks.append((n, m.group(1), m.start(), m.end()))
+        pos = m.end()
+
+    added = 0
+    for i, (n, unit, _s, body_start) in enumerate(marks):
+        if n in by_class:
+            continue
+        end = marks[i + 1][2] if i + 1 < len(marks) else len(blob)
+        body = blob[body_start:end].strip()
+        co = ""
+        m = re.search(r'(\d(?:\s*[,&]\s*\d)*)\s*$', body)
+        if m:
+            co = re.sub(r'\s+', '', m.group(1))
+            body = body[:m.start()].strip()
+        if len(body) < 4:
+            continue
+        # glued fragments: "Clocking and TimingTiming diagramsTiming analysis"
+        parts = re.split(r'(?<=[a-z0-9\)])(?=[A-Z])', body)
+        topic = parts[0].strip()
+        focus = parts[1].strip() if len(parts) > 1 else ""
+        activity = " ".join(p.strip() for p in parts[2:]) if len(parts) > 2 else ""
         by_class[n] = {
-            "number": str(n),
-            "unitNo": m.group(2),
-            "topic": topic,
-            "teachingFocus": focus,
-            "activity": activity,
-            "cosCovered": "",
-            "hours": 1,
+            "number": str(n), "unitNo": unit, "topic": topic,
+            "teachingFocus": focus, "activity": activity,
+            "cosCovered": co, "hours": 1,
         }
+        added += 1
+    return added
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1236,7 +1215,7 @@ def extract_rich_sections(sections, data):
 
 
 def _paragraphs(text):
-    t = clean_text(text)
+    t = clean_text(text)  # clean_text -> unescape_latex
     return f"<p>{escape_html(t)}</p>" if t else ""
 
 
@@ -1269,13 +1248,12 @@ def parse_resources(section_text: str, tables: list, data: dict) -> None:
         return rest.strip()
 
     books = slice_between(r'Text\s*books?\s*[:.]?', r'Reference|Online|Other\s+Resources')
-    refs  = slice_between(r'Reference\s*Books?\s*[:.]?', r'Online|Other\s+Resources')
+    refs = slice_between(r'Reference\s*Books?\s*[:.]?', r'Online|Other\s+Resources')
     other = slice_between(r'(?:Online|Other)\s+Resources?\s*[:.]?', r'2\.0|Teaching\s+and\s+Assessment')
 
-    data["resources"]["textBooks"]      = _split_list(books)
-    data["resources"]["references"]     = _split_list(refs)
+    data["resources"]["textBooks"] = _split_list(books)
+    data["resources"]["references"] = _split_list(refs)
     data["resources"]["otherResources"] = _split_list(other, bullet_style=True)
-
     data["onlineResources"] = _extract_online_resources(other + "\n" + section_text)
 
 
@@ -1296,23 +1274,14 @@ def _split_list(block, bullet_style=False):
 
 def _extract_online_resources(text: str) -> list:
     """
-    Extract online resources. Handles two source shapes:
-      A) Multi-line bullets (each on own line).
-      B) Flattened single line with `(Online Resource N)` markers between items:
-         "- NPTEL - Digital Circuits: (Online Resource1)- Coursera - ... (Online Resource2)..."
+    Handles both multi-line bullets and the flattened single-line form
+        "- NPTEL - X: (Online Resource1)- Coursera - Y: (Online Resource2)..."
+    by inserting a newline after every "(Online Resource N)" marker first.
     """
-    out = []
-    seen = set()
+    out, seen = [], set()
+    normalized = re.sub(r'(\(\s*Online\s*Resource\s*\d+\s*\))', r'\1\n', text or "", flags=re.I)
 
-    # Shape B: split on (Online Resource N) markers
-    if re.search(r'\(Online\s*Resource\s*\d+\)', text, re.I):
-        # Insert newlines before every "(Online Resource N)" boundary and before "- " bullets
-        normalized = re.sub(r'(\(Online\s*Resource\s*\d+\))', r'\1\n', text, flags=re.I)
-        lines = normalized.split("\n")
-    else:
-        lines = text.split("\n")
-
-    for raw_line in lines:
+    for raw_line in normalized.split("\n"):
         line = clean_text(raw_line)
         if not line:
             continue
@@ -1320,46 +1289,33 @@ def _extract_online_resources(text: str) -> list:
             continue
         if re.fullmatch(r'\d+(\.\d+)*', line):
             continue
-
         line = re.sub(r'^\s*(?:[-•●▪]|\d+\.)\s*', '', line).strip()
 
-        # Extract URL if present
+        def add(label, url=""):
+            label = label.strip(" :-–—")
+            key = (label.lower(), url)
+            if label and key not in seen:
+                seen.add(key)
+                out.append({"label": label, "url": url})
+
         url_match = _URL_RE.search(line)
         if url_match:
-            url = url_match.group(0).rstrip('.,;')
-            label = clean_text(_URL_RE.sub('', line)).strip(" :-–—")
-            label = re.sub(r'\(Online\s*Resource\d+\)', '', label, flags=re.I).strip(" :-–—")
-            if label and (label.lower(), url) not in seen:
-                seen.add((label.lower(), url))
-                out.append({"label": label, "url": url})
+            url = url_match.group(0).rstrip('.,;)')
+            label = clean_text(_URL_RE.sub('', line))
+            label = re.sub(r'\(\s*Online\s*Resource\s*\d+\s*\)', '', label, flags=re.I)
+            add(label, url)
             continue
 
-        # "(Online Resource N)" marker — everything before it is the label
-        m = re.match(r'^(.*?)\s*\(Online\s*Resource\s*\d+\)\s*$', line, re.I)
+        m = re.match(r'^(.*?)\s*\(\s*Online\s*Resource\s*\d+\s*\)\s*$', line, re.I)
         if m:
-            label = clean_text(m.group(1)).strip(" :-–—")
-            # Collapse multiple "- " bullets accidentally inside one line
-            if "- " in label and len(label) > 80:
-                for sub in label.split(" - "):
-                    sub = sub.strip()
-                    if sub and (sub.lower(), "") not in seen:
-                        seen.add((sub.lower(), ""))
-                        out.append({"label": sub, "url": ""})
-            elif label:
-                if (label.lower(), "") not in seen:
-                    seen.add((label.lower(), ""))
-                    out.append({"label": label, "url": ""})
+            add(m.group(1))
             continue
 
-        # "Label - Value" pattern
         m = re.match(r'^([A-Z][\w &/\-\.]{2,60}?)\s*[-–—:]\s*(.+)$', line)
         if m:
-            label = clean_text(f"{m.group(1).strip()} - {m.group(2).strip()}")
-            # Stop at (Online Resource N)
-            label = re.sub(r'\s*\(Online\s*Resource\d+\).*$', '', label, flags=re.I).strip()
-            if label and (label.lower(), "") not in seen:
-                seen.add((label.lower(), ""))
-                out.append({"label": label, "url": ""})
+            label = f"{m.group(1).strip()} - {m.group(2).strip()}"
+            label = re.sub(r'\s*\(\s*Online\s*Resource\s*\d+\s*\).*$', '', label, flags=re.I)
+            add(label)
 
     return out
 
@@ -1370,7 +1326,6 @@ def _extract_online_resources(text: str) -> list:
 
 def parse_schedule(section_text: str, tables: list, data: dict) -> None:
     schedule = default_schedule()
-
     for tbl in tables:
         if not tbl:
             continue
@@ -1390,17 +1345,31 @@ def parse_schedule(section_text: str, tables: list, data: dict) -> None:
             )
             if not label_key:
                 continue
-            schedule["rows"][label_key] = cells[1:][:len(schedule["weeks"])]
-            while len(schedule["rows"][label_key]) < len(schedule["weeks"]):
-                schedule["rows"][label_key].append("")
-
+            vals = cells[1:][:len(schedule["weeks"])]
+            vals += [""] * (len(schedule["weeks"]) - len(vals))
+            schedule["rows"][label_key] = vals
     data["scheduleOfAssessments"] = schedule
     data["scheduleHtml"] = build_schedule_html(schedule)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 14.  ATTAINMENT TARGETS (§2.5)  + 3-BAND ATTAINED (§2.5 / §2.8)
+# 14.  ATTAINMENT TARGETS (§2.5) — state machine
 # ═════════════════════════════════════════════════════════════════════════════
+
+_TARGET_LINE_RE = re.compile(
+    r'(\d+(?:\.\d+)?\s*%\s+of\s+Students?\s+will\s+score\s+(?:an?\s+)?([AB]\s*\+?)\s+grade'
+    r'\s+and\s+(?:above|Above))',
+    re.I,
+)
+_LEVEL_RE = re.compile(r'(?<![\d%.])([123])(?![\d%.])')
+_LEVELS_ONLY_RE = re.compile(r'[123](?:\s+[123])*')
+
+
+def _statements(cell):
+    """-> [(band, text)] with band in {"A","B+","B"}."""
+    return [(re.sub(r'\s+', '', m.group(2)).upper(), clean_text(m.group(1)))
+            for m in _TARGET_LINE_RE.finditer(cell)]
+
 
 def parse_attainment_targets(section_text: str, tables: list, data: dict) -> None:
     targets = _targets_from_table(tables) or _targets_from_text(section_text)
@@ -1410,222 +1379,186 @@ def parse_attainment_targets(section_text: str, tables: list, data: dict) -> Non
     data["attainmentTargetsHtml"] = build_attainment_targets_html(targets)
 
 
-_TARGET_LINE_RE = re.compile(
-    r'(\d+%\s+of\s+Students?\s+will\s+score\s+([AB]\+?)\s+grade\s+and\s+(?:above|Above))',
-    re.I,
-)
-
-
 def _targets_from_table(tables):
-    """
-    §2.5 table has rows like:
-       CO1 | 60% ... A | 3
-           | 60% ... B+ | 2
-           | 60% ... B | 1
-    where "3 / 2 / 1" is the per-band Attainment Value.
-    The CO cell spans 3 rows (rowspan), so `merge_wrapped_rows` + state machine
-    is required.
-    """
-    # Try table walk first
+    """Concatenate merged rows of every attainment-looking table (page breaks
+    split the CO6 row across tables), then run the state machine once."""
+    all_rows = []
     for tbl in tables:
-        if not tbl or len(tbl) < 2:
+        if not tbl:
             continue
-        joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
-        if "attainment" not in joined and "targeted" not in joined:
+        joined = " ".join(clean_text(c) for row in tbl for c in row)
+        if not (re.search(r'attainment|targeted', joined, re.I) or _TARGET_LINE_RE.search(joined)):
             continue
-
-        merged = merge_wrapped_rows(tbl)
-        groups = _walk_attainment_rows(merged)
-        if groups:
-            return _attainment_groups_to_rows(groups)
-
-    # Try text-level state machine
-    groups = _walk_attainment_text(merge_wrapped_rows([]))
-    return []
+        all_rows.extend(merge_wrapped_rows(tbl))
+    groups = _walk_attainment_rows(all_rows)
+    return _attainment_groups_to_rows(groups) if groups else []
 
 
 def _walk_attainment_rows(rows):
-    """State machine that walks merged table rows and groups per CO."""
+    """
+    Accumulate A / B+ / B statements and trailing 1/2/3 levels until the next CO
+    row. A row with no CO label continues the current CO, which handles both
+    rowspan and a CO that is cut off at a page break.
+    """
     groups = {}
-    cur_co = None
-    pending_items = []
-    pending_vals = []
+    cur, items, levels = None, [], []
 
     def flush():
-        nonlocal cur_co, pending_items, pending_vals
-        if cur_co:
-            groups[cur_co] = _row_from_items(cur_co, pending_items, pending_vals)
-        cur_co, pending_items, pending_vals = None, [], []
+        nonlocal cur, items, levels
+        if cur:
+            prev = groups.get(cur)
+            if prev is None or len(items) >= prev["_n"]:
+                row = _row_from_items(cur, items, levels)
+                row["_n"] = len(items)
+                groups[cur] = row
+        cur, items, levels = None, [], []
 
     for row in rows:
-        if not any(row):
+        cells = [clean_text(c) for c in row]
+        if not any(cells):
             continue
-        first = clean_text(row[0]) if row else ""
-        m = re.search(r'\bCO\s*(\d+)', first, re.I)
-        if not m:
-            # Merge with any CO detection in the whole row
-            m = re.search(r'\bCO\s*(\d+)', " ".join(row), re.I)
-
+        m = re.match(r'^CO\s*(\d+)\b', cells[0], re.I)
         if m:
             flush()
-            cur_co = f"CO{int(m.group(1))}"
-            # Don't re-process the CO cell; only remaining cells
-            rest = row[1:] if first.upper().startswith("CO") else row
+            cur = f"CO{int(m.group(1))}"
+            tail = cells[0][m.end():].strip()
+            rest = ([tail] if tail else []) + cells[1:]
+        elif cur is None:
+            continue
         else:
-            rest = row
+            rest = cells
 
-        # Scan all cells for 60% statements and trailing ints
         for cell in rest:
-            cell = clean_text(cell)
             if not cell:
                 continue
-            for tm in _TARGET_LINE_RE.finditer(cell):
-                pending_items.append(tm.group(1))
-            # Trailing single-digit level (1/2/3) that's NOT part of a %
-            stripped = _TARGET_LINE_RE.sub('', cell).strip()
-            for lv in re.findall(r'(?<![\d%.])([123])(?![\d%.])', stripped):
-                pending_vals.append(lv)
-
+            items.extend(_statements(cell))
+            remainder = _TARGET_LINE_RE.sub(' ', cell).strip()
+            if remainder and _LEVELS_ONLY_RE.fullmatch(remainder):
+                levels.extend(_LEVEL_RE.findall(remainder))
     flush()
+    for g in groups.values():
+        g.pop("_n", None)
     return groups
 
 
-def _walk_attainment_text(_unused):
-    return {}
-
-
 def _attainment_groups_to_rows(groups):
-    out = []
-    for i in range(1, CO_COUNT + 1):
-        co = f"CO{i}"
-        out.append(groups.get(co, default_attainment_row(i)))
-    return out
+    return [groups.get(f"CO{i}", default_attainment_row(i)) for i in range(1, CO_COUNT + 1)]
 
 
 def _row_from_items(co, items, levels):
-    """Assemble an attainment row from ordered A/B+/B statements + levels."""
     row = default_attainment_row(0)
     row["co"] = co
-
-    # Fill the three statement bands in order A, B+, B
-    band_keys = [("aText", "aTarget"), ("bPlusText", "bPlusTarget"), ("bText", "bTarget")]
-    for i, (tk, tgt) in enumerate(band_keys):
-        if i < len(items):
-            row[tk] = items[i]
-            m = re.match(r'(\d+)%', items[i])
-            row[tgt] = safe_int(m.group(1)) if m else 60
-
-    # Fill the three *Attained* slots from the trailing levels
-    att_keys = ["aAttained", "bPlusAttained", "bAttained"]
-    for i, key in enumerate(att_keys):
-        if i < len(levels):
-            row[key] = safe_float(levels[i])
+    band_keys = {"A": ("aText", "aTarget"), "B+": ("bPlusText", "bPlusTarget"),
+                 "B": ("bText", "bTarget")}
+    for band, text in items:
+        keys = band_keys.get(band)
+        if not keys:
+            continue
+        row[keys[0]] = text
+        m = re.match(r'(\d+(?:\.\d+)?)', text)
+        row[keys[1]] = safe_float(m.group(1)) if m else 60
+        if row[keys[1]] == int(row[keys[1]]):
+            row[keys[1]] = int(row[keys[1]])
+    for key, lv in zip(["aAttained", "bPlusAttained", "bAttained"], levels):
+        row[key] = safe_float(lv)
     return row
 
 
 def _targets_from_text(text):
     if not text:
         return []
+    t = clean_text(text)
+    parts = re.split(r'\bCO\s*(\d+)\b', t, flags=re.I)  # [pre, n, body, n, body ...]
     groups = {}
-    current = None
-    for ln in text.splitlines():
-        m = re.search(r'CO\s*(\d+)', ln, re.I)
-        if m:
-            current = f"CO{int(m.group(1))}"
+    for i in range(1, len(parts) - 1, 2):
+        co = f"CO{int(parts[i])}"
+        body = parts[i + 1]
+        items = _statements(body)
+        if not items:
             continue
-        if not current:
-            continue
-        for it in _TARGET_LINE_RE.finditer(ln):
-            groups.setdefault(current, []).append(it.group(1))
-
+        remainder = _TARGET_LINE_RE.sub(' ', body)
+        levels = _LEVEL_RE.findall(remainder)[:3]
+        row = _row_from_items(co, items, levels)
+        prev = groups.get(co)
+        if prev is None or len(items) >= prev[0]:
+            groups[co] = (len(items), row)
     if not groups:
         return []
-    out = []
-    for i in range(1, CO_COUNT + 1):
-        co = f"CO{i}"
-        items = groups.get(co, [])
-        out.append(_row_from_items(co, items, []))
-    return out
+    return [groups[f"CO{i}"][1] if f"CO{i}" in groups else default_attainment_row(i)
+            for i in range(1, CO_COUNT + 1)]
 
 
-def parse_attained_values(section_text: str, cab_text: str, tables: list, data: dict) -> None:
+def parse_attained_values(section_text: str, cab_text: str, tables: list, data: dict) -> str:
     """
-    Fill per-band aAttained/bPlusAttained/bAttained from CAB (§2.8) if present;
-    otherwise infer from grade distribution.
-
-    NOTE: In the UE26CS1102 PDF the CAB "Attained Value" column is empty, so
-    inference from grades is the correct fallback.
+    Order of preference:
+      1. "Attained Value" column of a CAB/§2.5 table  (accepted only if non-zero)
+      2. prose "CO1 3 2 1"
+      3. inference from the grade distribution
+      4. whatever level values the §2.5 state machine found
+    Never leaves attained all-zero if grades are available.
+    Returns the source used ("table" | "prose" | "grades" | "targets" | "none").
     """
     attained_by_co = {}
 
     def _scan_table(tbl):
         if not tbl or len(tbl) < 2:
             return
-        header = [clean_text(c).lower() for c in tbl[0]]
         att_idx = None
-        for i, h in enumerate(header):
-            if "attained value" in h or "attained" in h:
-                att_idx = i
+        for r in tbl[:3]:
+            for i, c in enumerate(r):
+                if "attained" in clean_text(c).lower():
+                    att_idx = i
+                    break
+            if att_idx is not None:
                 break
-        for r in tbl[1:]:
+        for r in tbl:
             cells = [clean_text(c) for c in r]
             joined_r = " ".join(cells)
             co_m = _CO_RE.search(joined_r)
             if not co_m:
                 continue
             co = f"CO{int(co_m.group(1))}"
-            # Collect the three numbers to the right of the CO
-            tail = joined_r[co_m.end():]
-            nums = [safe_float(x) for x in re.findall(r'\d+(?:\.\d+)?', tail)]
-            a     = nums[0] if len(nums) > 0 else 0
-            b_plus = nums[1] if len(nums) > 1 else 0
-            b     = nums[2] if len(nums) > 2 else 0
-            # Only accept if at least one non-zero
-            if a or b_plus or b:
-                attained_by_co[co] = {"a": a, "bPlus": b_plus, "b": b}
+            scope = " ".join(cells[att_idx:]) if att_idx is not None else joined_r[co_m.end():]
+            nums = [safe_float(x) for x in re.findall(r'\d+(?:\.\d+)?', scope)]
+            vals = (nums + [0, 0, 0])[:3]
+            if any(v > 0 for v in vals):           # only non-zero counts
+                attained_by_co[co] = {"a": vals[0], "bPlus": vals[1], "b": vals[2]}
 
-    # Prefer CAB tables, then §2.5
     for tbl in tables:
         joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
-        if "attained value" in joined:
+        if "attained value" in joined or "attained" in joined and "cab" in joined:
             _scan_table(tbl)
-    # Prose fallback
-    for src in (cab_text or "", section_text or ""):
-        for m in re.finditer(
-            r'CO\s*(\d{1,2})[^\n]{0,80}?'
-            r'(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)',
-            src, re.I,
-        ):
-            co = f"CO{int(m.group(1))}"
-            # Only if we don't already have real values
-            if co not in attained_by_co:
-                vals = [safe_float(m.group(i)) for i in (2, 3, 4)]
-                # Heuristic: treat as 3/2/1 levels not percentages
-                if all(v <= 3 for v in vals) and any(v > 0 for v in vals):
-                    attained_by_co[co] = {"a": vals[0], "bPlus": vals[1], "b": vals[2]}
 
-    # Merge
-    perf = data.get("performanceRecording") or default_performance()
-    inferred = _infer_attained_from_grades(perf)
+    prose = {}
+    for src in (cab_text or "", section_text or ""):
+        for m in re.finditer(r'\bCO\s*(\d{1,2})\b\s+([123])\s+([123])\s+([123])\b', src, re.I):
+            co = f"CO{int(m.group(1))}"
+            prose.setdefault(co, {"a": safe_float(m.group(2)),
+                                  "bPlus": safe_float(m.group(3)),
+                                  "b": safe_float(m.group(4))})
+
+    inferred = _infer_attained_from_grades(data.get("performanceRecording") or default_performance())
+    has_inferred = any(inferred.values())
+    used = set()
 
     for row in data["attainmentTargets"]:
         co = row["co"]
-        got = attained_by_co.get(co)
-        if got:
-            row["aAttained"]     = got["a"]
-            row["bPlusAttained"] = got["bPlus"]
-            row["bAttained"]     = got["b"]
+        if co in attained_by_co:
+            got, tag = attained_by_co[co], "table"
+        elif co in prose:
+            got, tag = prose[co], "prose"
+        elif has_inferred:
+            got, tag = inferred, "grades"
         else:
-            # Try prose §2.5 "CO<n> 3 2 1"
-            m = re.search(rf'\b{co}\b\s+([123])\s+([123])\s+([123])', section_text or "", re.I)
-            if m:
-                row["aAttained"]     = safe_float(m.group(1))
-                row["bPlusAttained"] = safe_float(m.group(2))
-                row["bAttained"]     = safe_float(m.group(3))
-            else:
-                row["aAttained"]     = inferred.get("a", 0)
-                row["bPlusAttained"] = inferred.get("bPlus", 0)
-                row["bAttained"]     = inferred.get("b", 0)
+            used.add("targets" if any((row["aAttained"], row["bPlusAttained"], row["bAttained"])) else "none")
+            continue
+        row["aAttained"], row["bPlusAttained"], row["bAttained"] = got["a"], got["bPlus"], got["b"]
+        used.add(tag)
+
+    for pref in ("table", "prose", "grades", "targets"):
+        if pref in used:
+            return pref
+    return "none"
 
 
 def _infer_attained_from_grades(perf) -> dict:
@@ -1633,103 +1566,99 @@ def _infer_attained_from_grades(perf) -> dict:
     total = sum(gd.values())
     if total <= 0:
         return {"a": 0, "bPlus": 0, "b": 0}
-
-    ge_a     = gd.get("O", 0) + gd.get("Aplus", 0) + gd.get("A", 0)
+    ge_a = gd.get("O", 0) + gd.get("Aplus", 0) + gd.get("A", 0)
     ge_bplus = ge_a + gd.get("Bplus", 0)
-    ge_b     = ge_bplus + gd.get("B", 0)
-
-    return {
-        "a":     round(100 * ge_a / total),
-        "bPlus": round(100 * ge_bplus / total),
-        "b":     round(100 * ge_b / total),
-    }
+    ge_b = ge_bplus + gd.get("B", 0)
+    return {"a": round(100 * ge_a / total),
+            "bPlus": round(100 * ge_bplus / total),
+            "b": round(100 * ge_b / total)}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 15.  PERFORMANCE RECORDING (§2.6) — LOCK the "B Grade" row
+# 15.  PERFORMANCE RECORDING (§2.6) — lock the "B Grade" row
 # ═════════════════════════════════════════════════════════════════════════════
 
 _GRADE_LABEL_RE = {
-    "O":     re.compile(r'\bO[\s\-]*graders?\b',            re.I),
-    "Aplus": re.compile(r'\bA\s*\+[\s\-]*graders?\b',       re.I),
-    "A":     re.compile(r'(?<![+\-])\bA[\s\-]*graders?\b',  re.I),
-    "Bplus": re.compile(r'\bB\s*\+[\s\-]*graders?\b',       re.I),
-    "B":     re.compile(r'(?<![+\-])\bB[\s\-]*graders?\b',  re.I),
-    "C":     re.compile(r'\bC[\s\-]*graders?\b',            re.I),
-    "D":     re.compile(r'\bD[\s\-]*graders?\b',            re.I),
+    "O":     re.compile(r'\bO[\s\-]*graders?\b', re.I),
+    "Aplus": re.compile(r'\bA\s*\+[\s\-]*graders?\b', re.I),
+    "A":     re.compile(r'(?<![+\-])\bA[\s\-]*graders?\b', re.I),
+    "Bplus": re.compile(r'\bB\s*\+[\s\-]*graders?\b', re.I),
+    "B":     re.compile(r'(?<![+\-])\bB[\s\-]*graders?\b', re.I),
+    "C":     re.compile(r'\bC[\s\-]*graders?\b', re.I),
+    "D":     re.compile(r'\bD[\s\-]*graders?\b', re.I),
 }
+_COUNTS5_RE = re.compile(r'^\s*\d+\s+\d{1,4}\s+\d{1,4}\s+\d{1,4}\s+\d{1,4}\s*$', re.M)
+_COUNTS4_RE = re.compile(r'^\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})\s*$', re.M)
 
 
 def parse_performance(section_text: str, tables: list, data: dict) -> None:
     perf = default_performance()
     text = section_text or ""
+    filled = {"total": False, "appeared": False, "passed": False, "avg": False}
 
-    # ── 1) "B Grade   4  8  10  14  10  8  4" — most reliable; LOCK after match
-    grade_row = re.search(r'B\s*Grade[^\d]{0,15}((?:\d+\s+){6}\d+)', text, re.I)
-    if grade_row:
-        nums = [safe_int(n) for n in re.findall(r'\d+', grade_row.group(1))][:7]
+    # 1) "B Grade 4 8 10 14 10 8 4" — most reliable. LOCK once all 7 are filled.
+    grades_locked = False
+    gm = re.search(r'B\s*Grade[^\d]{0,15}((?:\d+\s+){6}\d+)', text, re.I)
+    if gm:
+        nums = [safe_int(n) for n in re.findall(r'\d+', gm.group(1))][:7]
         if len(nums) == 7:
             for k, v in zip(GRADE_KEYS, nums):
                 perf["gradeDistribution"][k] = v
-            _finalize_grade_lock(perf)
+            grades_locked = True
 
-    # ── 2) counts row (4 ints on one line: 60 58 54 58)
-    if not grade_row:
-        counts_line = re.search(
-            r'^\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})\s*$',
-            text, re.M,
-        )
-        if counts_line:
-            perf["totalStudents"]    = safe_int(counts_line.group(1))
-            perf["appearedStudents"] = safe_int(counts_line.group(2))
-            perf["passedStudents"]   = safe_int(counts_line.group(3))
-            perf["classAverage"]     = safe_float(counts_line.group(4))
+    # 2) Counts row: "60 58 54 58" (4 ints) or "0 60 58 54 58" (5 ints, skip leading 0)
+    m5 = _COUNTS5_RE.search(text)
+    m4 = _COUNTS4_RE.search(text)
+    counts = None
+    if m5:
+        nums = [safe_int(n) for n in re.findall(r'\d+', m5.group(0))]
+        counts = nums[1:5] if nums[0] == 0 else nums[-4:]
+    elif m4:
+        counts = [safe_int(m4.group(i)) for i in range(1, 5)]
+    if counts:
+        perf["totalStudents"], perf["appearedStudents"], perf["passedStudents"] = counts[:3]
+        perf["classAverage"] = float(counts[3])
+        filled = {k: True for k in filled}
 
-    # ── 3) Labelled values
-    for field, pat in [
-        ("totalStudents",    r'total\s+number\s+of\s+students?[^\d]*(\d+(?:\.\d+)?)'),
-        ("appearedStudents", r'(?:number\s+of\s+students?\s+appeared|appeared)[^\d]*(\d+(?:\.\d+)?)'),
-        ("passedStudents",   r'(?:students?\s+passed|passed)[^\d]*(\d+(?:\.\d+)?)'),
-        ("classAverage",     r'class\s+average[^\d]*(\d+(?:\.\d+)?)'),
+    # 3) Labelled values (only fill what the counts row did not)
+    for field, key, pat in [
+        ("totalStudents",    "total",    r'total\s+number\s+of\s+students?[^\d]*(\d+(?:\.\d+)?)'),
+        ("appearedStudents", "appeared", r'(?:number\s+of\s+students?\s+appeared|appeared)[^\d]*(\d+(?:\.\d+)?)'),
+        ("passedStudents",   "passed",   r'(?:students?\s+passed|passed)[^\d]*(\d+(?:\.\d+)?)'),
+        ("classAverage",     "avg",      r'class\s+average[^\d]*(\d+(?:\.\d+)?)'),
     ]:
+        if filled[key]:
+            continue
         m = re.search(pat, text, re.I)
         if m:
             perf[field] = safe_float(m.group(1)) if field == "classAverage" else safe_int(m.group(1))
 
-    # ── 4) ONLY IF grade distribution still empty: 11-number fallback
-    if sum(perf["gradeDistribution"].values()) == 0:
+    # 4) 11-number fallback — NEVER when the B Grade row locked the grades
+    if not grades_locked and sum(perf["gradeDistribution"].values()) == 0:
         flat = re.findall(r'(?<![\w.])(\d{1,3})(?![\w.])', text)
         if len(flat) >= 11:
             nums = [safe_int(n) for n in flat[-11:]]
-            perf["totalStudents"]    = perf["totalStudents"]    or nums[0]
+            perf["totalStudents"] = perf["totalStudents"] or nums[0]
             perf["appearedStudents"] = perf["appearedStudents"] or nums[1]
-            perf["passedStudents"]   = perf["passedStudents"]   or nums[2]
-            perf["classAverage"]     = perf["classAverage"]     or float(nums[3])
+            perf["passedStudents"] = perf["passedStudents"] or nums[2]
+            perf["classAverage"] = perf["classAverage"] or float(nums[3])
             for k, v in zip(GRADE_KEYS, nums[4:]):
                 perf["gradeDistribution"][k] = v
 
-    # ── 5) Per-grade label fallback (only fills missing slots)
-    for key, pat in _GRADE_LABEL_RE.items():
-        if perf["gradeDistribution"].get(key):
-            continue
-        m = pat.search(text)
-        if m:
-            num = re.search(r'[^\d\-]{0,15}?(\d+)', text[m.end():])
-            if num:
-                perf["gradeDistribution"][key] = safe_int(num.group(1))
+    # 5) Per-grade label fallback — only fills missing slots, never when locked
+    if not grades_locked:
+        for key, pat in _GRADE_LABEL_RE.items():
+            if perf["gradeDistribution"].get(key):
+                continue
+            m = pat.search(text)
+            if m:
+                num = re.search(r'[^\d\-]{0,15}?(\d+)', text[m.end():])
+                if num:
+                    perf["gradeDistribution"][key] = safe_int(num.group(1))
 
-    # Sanity: totalStudents fallback = sum of grades
     if not perf["totalStudents"]:
         perf["totalStudents"] = sum(perf["gradeDistribution"].values())
-
     data["performanceRecording"] = perf
-
-
-def _finalize_grade_lock(perf):
-    """Mark grades as 'locked' by summing them (used by caller to detect)."""
-    total = sum(perf["gradeDistribution"].values())
-    if total and not perf.get("totalStudents"):
-        perf["totalStudents"] = total
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1741,7 +1670,7 @@ def parse_cab(section_text, data):
 
 
 def parse_co_mapping(section_text, tables, data):
-    matrix = _matrix_from_table(tables) or _matrix_from_text(section_text)
+    matrix = _matrix_from_table(tables, 1) or _matrix_from_text(section_text)
     if not matrix or len(matrix) < 2:
         matrix = default_matrix()
     data["coAttainmentMapping"] = matrix
@@ -1756,21 +1685,19 @@ def parse_feedback(section_text, tables, data):
         joined = " ".join(clean_text(c) for row in tbl for c in row).lower()
         if "feedback" not in joined or "co" not in joined:
             continue
-        # Find header
         header_idx = None
         for i, r in enumerate(tbl):
             hs = [clean_text(c).lower() for c in r]
-            if any("co" in h and h in ("co", "cos") for h in hs) and any("feedback" in h for h in hs):
+            if any(h in ("co", "cos") for h in hs) and any("feedback" in h for h in hs):
                 header_idx = i
                 break
         if header_idx is None:
             continue
         header = [clean_text(c).lower() for c in tbl[header_idx]]
-        co_idx  = next((i for i, h in enumerate(header) if h in ("co", "cos")), None)
-        fb_idx  = next((i for i, h in enumerate(header) if "feedback" in h), None)
+        co_idx = next((i for i, h in enumerate(header) if h in ("co", "cos")), None)
+        fb_idx = next((i for i, h in enumerate(header) if "feedback" in h), None)
         if co_idx is None or fb_idx is None:
             continue
-
         for r in tbl[header_idx + 1:]:
             cells = [clean_text(c) for c in r]
             if not any(cells):
@@ -1779,9 +1706,8 @@ def parse_feedback(section_text, tables, data):
             m = _CO_RE.search(co_cell)
             if not m:
                 continue
-            co = f"CO{int(m.group(1))}"
             fb = cells[fb_idx] if fb_idx < len(cells) else ""
-            rows.append({"co": co, "feedback": fb})
+            rows.append({"co": f"CO{int(m.group(1))}", "feedback": fb})
 
     if not rows:
         for ln in (section_text or "").splitlines():
@@ -1789,34 +1715,29 @@ def parse_feedback(section_text, tables, data):
             if m:
                 rows.append({"co": f"CO{int(m.group(1))}", "feedback": clean_text(m.group(2))})
 
-    # Pad/dedupe
     by_co = {r["co"]: r for r in rows}
-    final = []
-    for i in range(1, CO_COUNT + 1):
-        co = f"CO{i}"
-        final.append(by_co.get(co, {"co": co, "feedback": ""}))
-
+    final = [by_co.get(f"CO{i}", {"co": f"CO{i}", "feedback": ""}) for i in range(1, CO_COUNT + 1)]
     data["feedback"] = final
     data["feedbackHtml"] = build_feedback_html(final)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 17.  ORCHESTRATOR
+# 17.  ORCHESTRATOR + DIAGNOSTICS
 # ═════════════════════════════════════════════════════════════════════════════
 
 def parse_single_cd(pages_text: list, pages_tables: list) -> dict:
     full_text = "\n".join(strip_page_noise(t or "") for t in pages_text)
     all_tables = [t for page in pages_tables for t in (page or [])]
     sections = slice_document(full_text)
-
     data = make_empty_cd()
+    warnings = []
 
-    parse_identity(sections.get("course_details", full_text), all_tables, data)
-    parse_course_size(sections.get("course_size", ""), all_tables, data)
+    hours_src = parse_identity(sections.get("course_details", full_text), all_tables, data)
+    size_src = parse_course_size(sections.get("course_size", ""), all_tables, data)
     parse_course_outcomes(sections.get("course_outcomes", ""), all_tables, data)
     parse_outcome_map(sections.get("outcome_map", ""), all_tables, data)
     parse_resources(sections.get("resources", ""), all_tables, data)
-    parse_teaching(sections.get("teaching_plan", ""), all_tables, data)
+    teaching_n = parse_teaching(sections.get("teaching_plan", ""), all_tables, data, full_text)
     parse_assessment_weight(sections.get("assessment_weight", ""), all_tables, data)
     parse_schedule(sections.get("schedule_assess", ""), all_tables, data)
     parse_attainment_targets(sections.get("attain_targets", ""), all_tables, data)
@@ -1826,51 +1747,91 @@ def parse_single_cd(pages_text: list, pages_tables: list) -> dict:
     parse_feedback(sections.get("feedback", ""), all_tables, data)
     extract_rich_sections(sections, data)
 
-    parse_attained_values(
-        section_text=sections.get("attain_targets", ""),
-        cab_text=sections.get("cab", ""),
-        tables=all_tables,
-        data=data,
-    )
+    att_src = parse_attained_values(
+        sections.get("attain_targets", ""), sections.get("cab", ""), all_tables, data)
     data["attainmentTargetsHtml"] = build_attainment_targets_html(data["attainmentTargets"])
 
     if not data["totalHours"]:
         m = re.search(r'Total\s+Term/?\s*Semester\s+hours?:?\s*(\d+)', full_text, re.I)
         if m:
             data["totalHours"] = safe_int(m.group(1))
+    total_hours_source = hours_src or size_src or "fallback"
 
-    data.pop("_full", None)
+    # ── Diagnostics ──────────────────────────────────────────────────────
+    co_count = sum(1 for c in data["courseOutcomes"] if c.get("description"))
+    has_map = matrix_has_data(data["outcomeMap"]["matrix"])
+    has_co_map = matrix_has_data(data["coAttainmentMapping"])
+    has_attained = any(
+        r["aAttained"] or r["bPlusAttained"] or r["bAttained"] for r in data["attainmentTargets"])
+    mapping_empty = not (has_map and has_co_map)
+    expected = data["totalHours"] or DEFAULT_CLASS_COUNT
+
+    if teaching_n < expected:
+        warnings.append(
+            f"Lesson plan only {teaching_n}/{expected} classes recovered — the PDF lesson-plan "
+            f"pages are unreadable artifacts. Re-export DOCX to tagged PDF or parse the .docx directly.")
+    if co_count < CO_COUNT:
+        warnings.append(f"Only {co_count}/{CO_COUNT} course outcomes have text.")
+    if not has_map:
+        warnings.append("§1.5 CO–PO/PSO mapping has headers but no values; left as an empty grid.")
+    if not has_co_map:
+        warnings.append("§2.9 CO attainment mapping has no values; left as an empty grid.")
+    if not has_attained:
+        warnings.append("No attained values found and no grade distribution to infer them from.")
+    if total_hours_source == "hours_per_week":
+        warnings.append("Contact Hours missing; totalHours was taken from Hours/Week and may be wrong.")
+    if not data.get("courseCode"):
+        warnings.append("Course code could not be read from the PDF.")
+
+    data["_diagnostics"] = {
+        "teaching_rows": teaching_n,
+        "co_count": co_count,
+        "has_outcome_map": has_map,
+        "has_co_mapping": has_co_map,
+        "has_attained": has_attained,
+        "attained_source": att_src,
+        "mapping_empty": mapping_empty,
+        "total_hours_source": total_hours_source,
+        "warnings": warnings,
+    }
+    if mapping_empty:
+        sys.stderr.write(f"[cd-parser] mapping_empty: true ({data.get('courseCode') or '?'})\n")
     return data
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 18.  PDF EXTRACTION — multiple strategies, per-page loose fallback
+# 18.  PDF EXTRACTION — 4-strategy per-page fallback
 # ═════════════════════════════════════════════════════════════════════════════
 
+_TABLE_STRATEGIES = [
+    {"vertical_strategy": "lines", "horizontal_strategy": "lines",
+     "snap_tolerance": 3, "join_tolerance": 3},
+    {"vertical_strategy": "text", "horizontal_strategy": "text",
+     "snap_tolerance": 3, "join_tolerance": 3, "intersection_tolerance": 5},
+    {"vertical_strategy": "lines", "horizontal_strategy": "text",
+     "snap_tolerance": 3, "join_tolerance": 3},
+    {"vertical_strategy": "text", "horizontal_strategy": "lines",
+     "snap_tolerance": 3, "join_tolerance": 3},
+]
+
+
+def _non_empty_cells(tables):
+    return sum(1 for t in tables for row in t for c in row if c and str(c).strip())
+
+
 def _extract_page_tables_robust(page):
-    """Try multiple strategies; return the best (most cells) table set."""
-    candidates = []
-    for strat in [
-        {"vertical_strategy": "lines", "horizontal_strategy": "lines",
-         "snap_tolerance": 3, "join_tolerance": 3},
-        {"vertical_strategy": "text",  "horizontal_strategy": "text",
-         "snap_tolerance": 3, "join_tolerance": 3, "intersection_tolerance": 5},
-        {"vertical_strategy": "lines", "horizontal_strategy": "text",
-         "snap_tolerance": 3, "join_tolerance": 3},
-        {"vertical_strategy": "text",  "horizontal_strategy": "lines",
-         "snap_tolerance": 3, "join_tolerance": 3},
-    ]:
+    """Try lines/lines, text/text, lines/text, text/lines; keep the table set
+    with the most non-empty cells."""
+    best, best_n = [], 0
+    for strat in _TABLE_STRATEGIES:
         try:
-            tables = page.extract_tables(strat) or []
-            cells = sum(len(c) for t in tables for row in t for c in row if c)
-            if cells:
-                candidates.append((cells, tables))
+            tables = page.extract_tables(dict(strat)) or []
         except Exception:
-            pass
-    if not candidates:
-        return []
-    candidates.sort(reverse=True, key=lambda x: x[0])
-    return candidates[0][1]
+            continue
+        n = _non_empty_cells(tables)
+        if n > best_n:
+            best, best_n = tables, n
+    return best
 
 
 def extract_pages(file_path: str):
@@ -1879,16 +1840,13 @@ def extract_pages(file_path: str):
         for page in pdf.pages:
             pages_text.append(page.extract_text() or "")
             try:
-                tables = page.extract_tables({
-                    "vertical_strategy": "lines",
-                    "horizontal_strategy": "lines",
-                    "snap_tolerance": 3,
-                    "join_tolerance": 3,
-                }) or []
+                tables = page.extract_tables(dict(_TABLE_STRATEGIES[0])) or []
             except Exception:
                 tables = []
             if not tables or not any(len(t) >= 2 for t in tables):
-                tables = _extract_page_tables_robust(page)
+                robust = _extract_page_tables_robust(page)
+                if _non_empty_cells(robust) >= _non_empty_cells(tables):
+                    tables = robust
             pages_tables.append(tables)
     return pages_text, pages_tables
 
@@ -1916,16 +1874,26 @@ def find_boundaries(pages_text):
 # 20.  TOP-LEVEL
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _summarise(results):
+    warnings, mapping_empty = [], False
+    for r in results:
+        d = r.get("_diagnostics", {})
+        tag = r.get("courseCode") or "CD"
+        warnings.extend(f"[{tag}] {w}" for w in d.get("warnings", []))
+        mapping_empty = mapping_empty or d.get("mapping_empty", False)
+    counts = ", ".join(
+        f"{r.get('courseCode') or '?'}: {r['_diagnostics']['teaching_rows']} classes" for r in results)
+    return warnings, mapping_empty, counts
+
+
 def parse_cd_pdf(file_path: str) -> dict:
     try:
         with open(file_path, "rb") as fh:
             head = fh.read(8)
         if not head.startswith(b"%PDF-"):
-            return {
-                "success": False,
-                "message": f"Not a PDF (first bytes: {head!r}). Save as PDF first.",
-                "parsedData": [],
-            }
+            return {"success": False,
+                    "message": f"Not a PDF (first bytes: {head!r}). Save as PDF first.",
+                    "parsedData": []}
     except Exception as e:
         return {"success": False, "message": f"Cannot read file: {e}", "parsedData": []}
 
@@ -1934,25 +1902,25 @@ def parse_cd_pdf(file_path: str) -> dict:
         boundaries = find_boundaries(pages_text)
 
         if not boundaries:
-            return {
-                "success": True,
-                "message": "Single CD parsed.",
-                "parsedData": [parse_single_cd(pages_text, pages_tables)],
-            }
+            results = [parse_single_cd(pages_text, pages_tables)]
+        else:
+            boundaries.append((len(pages_text), "EOF"))
+            results = []
+            for i in range(len(boundaries) - 1):
+                s, e = boundaries[i][0], boundaries[i + 1][0]
+                parsed = parse_single_cd(pages_text[s:e], pages_tables[s:e])
+                if not parsed.get("courseCode"):
+                    parsed["courseCode"] = boundaries[i][1]
+                results.append(parsed)
 
-        boundaries.append((len(pages_text), "EOF"))
-        results = []
-        for i in range(len(boundaries) - 1):
-            s, e = boundaries[i][0], boundaries[i + 1][0]
-            hint = boundaries[i][1]
-            parsed = parse_single_cd(pages_text[s:e], pages_tables[s:e])
-            if not parsed.get("courseCode"):
-                parsed["courseCode"] = hint
-            results.append(parsed)
-
+        warnings, mapping_empty, counts = _summarise(results)
+        label = "Single CD parsed" if len(results) == 1 else f"Successfully parsed {len(results)} CD(s)"
         return {
             "success": True,
-            "message": f"Successfully parsed {len(results)} CD(s).",
+            "message": f"{label}. Lesson plan — {counts}."
+                       + (f" {len(warnings)} warning(s)." if warnings else ""),
+            "warnings": warnings,
+            "mapping_empty": mapping_empty,
             "parsedData": results,
         }
 
