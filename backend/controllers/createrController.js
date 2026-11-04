@@ -297,6 +297,35 @@ const incrementVersion = (version) => {
   return parts.join(".");
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: deep-compare two pd_data objects, ignoring assignee fields.
+// Returns true if the only differences are assigneeId / assigneeName.
+// ─────────────────────────────────────────────────────────────────────────────
+const ASSIGNEE_KEYS = new Set(["assigneeId", "assigneeName"]);
+
+const stripAssignees = (obj) => {
+  if (Array.isArray(obj)) return obj.map(stripAssignees);
+  if (obj && typeof obj === "object") {
+    const out = {};
+    for (const key of Object.keys(obj)) {
+      if (ASSIGNEE_KEYS.has(key)) continue;
+      out[key] = stripAssignees(obj[key]);
+    }
+    return out;
+  }
+  return obj;
+};
+
+const isAssignmentOnlyChange = (oldData, newData) => {
+  try {
+    const a = JSON.stringify(stripAssignees(oldData || {}));
+    const b = JSON.stringify(stripAssignees(newData || {}));
+    return a === b;
+  } catch {
+    return false;
+  }
+};
+
 export const createOrUpdatePD = async (req, res) => {
   try {
     const {
@@ -310,6 +339,7 @@ export const createOrUpdatePD = async (req, res) => {
       pdData,
       reviewerId,
       isWorkflowUpdate,
+      schemaVersion,
     } = req.body;
 
     const creatorId = req.id;
@@ -352,9 +382,22 @@ export const createOrUpdatePD = async (req, res) => {
       });
     }
 
-    // SCENARIO 2: ASSIGNMENT UPDATE ONLY
-    if (isWorkflowUpdate) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Detect whether this update is assignment-only.
+    // Two ways it can be flagged:
+    //   1. Frontend explicitly sets isWorkflowUpdate = true
+    //   2. Backend independently verifies that only assignee fields changed
+    //      (covers clients that forget to send the flag)
+    // ─────────────────────────────────────────────────────────────────────────
+    const assignmentOnly =
+      isWorkflowUpdate === true ||
+      isAssignmentOnlyChange(existingPD.pd_data, pdData);
+
+    // SCENARIO 2: ASSIGNMENT-ONLY UPDATE — NEVER bump version
+    if (assignmentOnly) {
       existingPD.pd_data = pdData;
+
+      // Only allow status promotion draft → under_review; never touch other statuses
       if (
         status &&
         existingPD.status === "draft" &&
@@ -363,16 +406,20 @@ export const createOrUpdatePD = async (req, res) => {
         existingPD.status = "under_review";
         existingPD.approved_by = reviewerId;
       }
+
       await existingPD.save();
+
       return res.json({
         success: true,
-        message: "Assignments updated successfully",
-        version: existingPD.version_no,
+        message: isWorkflowUpdate
+          ? "Assignments updated successfully"
+          : "Assignments updated (version unchanged)",
+        version: existingPD.version_no, // ← version NOT incremented
         data: existingPD,
       });
     }
 
-    // SCENARIO 3: Editing an existing Draft or Rejected doc
+    // SCENARIO 3: Editing an existing Draft or Rejected doc — no version bump
     if (existingPD.status === "draft" || existingPD.status === "rejected") {
       existingPD.pd_data = pdData;
       existingPD.program_name = programName;
@@ -391,12 +438,13 @@ export const createOrUpdatePD = async (req, res) => {
           status === "under_review"
             ? "Submitted to Admin for Review"
             : "Draft Updated Successfully",
-        version: existingPD.version_no,
+        version: existingPD.version_no, // ← version NOT incremented
         data: existingPD,
       });
     }
 
-    // SCENARIO 4: VERSION BUMP (Document is already under_review or approved)
+    // SCENARIO 4: VERSION BUMP (Document is under_review or approved AND
+    // content actually changed — not just assignees)
     const newVersion = incrementVersion(existingPD.version_no);
     const bumpedPD = await PD.create({
       program_id: programId,
@@ -502,6 +550,8 @@ export const getRecentVersions = async (req, res) => {
     res.json({ success: false, message: error.message });
   }
 };
+
+
 
 export const getPDById = async (req, res) => {
   try {

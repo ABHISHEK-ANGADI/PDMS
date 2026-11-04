@@ -23,13 +23,17 @@ import {
   Filter,
   GraduationCap,
   Zap,
+  BellRing,
+  Send,
+  MailPlus,
+  Loader2,
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
 import Preview from "../components/Preview";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPERS & CONSTANTS
+// HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 const getStatusStyle = (status) => {
   switch (status?.toLowerCase()) {
@@ -40,7 +44,7 @@ const getStatusStyle = (status) => {
     case "rejected":
       return "bg-red-50 text-red-700 border-red-200";
     default:
-      return "bg-stone-100 text-stone-600 border-stone-200"; // draft
+      return "bg-stone-100 text-stone-600 border-stone-200";
   }
 };
 
@@ -92,19 +96,91 @@ const StatusPill = ({ value, active, onClick }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASSIGNMENT MODAL COMPONENT (Upgraded for 2024 + 2026 Support)
+// NOTIFY DROPDOWN
+// ─────────────────────────────────────────────────────────────────────────────
+const NotifyDropdown = ({ pd, onRemind, onNotifyNew, busy }) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={busy}
+        className="flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-2.5 bg-violet-50 border border-violet-200 text-violet-700 rounded-xl text-xs font-bold hover:bg-violet-100 transition-colors shadow-sm disabled:opacity-50"
+      >
+        {busy ? (
+          <Loader2 size={15} className="animate-spin" />
+        ) : (
+          <BellRing size={15} />
+        )}
+        Notify
+      </button>
+
+      {open && !busy && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-stone-200 rounded-xl shadow-xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <button
+              onClick={() => {
+                setOpen(false);
+                onNotifyNew();
+              }}
+              className="w-full flex items-start gap-2 px-4 py-3 hover:bg-stone-50 text-left transition-colors border-b border-stone-100"
+            >
+              <MailPlus
+                size={14}
+                className="text-emerald-600 mt-0.5 flex-shrink-0"
+              />
+              <div>
+                <p className="text-xs font-bold text-stone-800">
+                  Notify Assignment Changes
+                </p>
+                <p className="text-[10px] text-stone-500 mt-0.5">
+                  Emails creators whose assigned courses changed (added or
+                  removed) since last mail.
+                </p>
+              </div>
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                onRemind();
+              }}
+              className="w-full flex items-start gap-2 px-4 py-3 hover:bg-stone-50 text-left transition-colors"
+            >
+              <Send
+                size={14}
+                className="text-violet-600 mt-0.5 flex-shrink-0"
+              />
+              <div>
+                <p className="text-xs font-bold text-stone-800">
+                  Send Reminder to All
+                </p>
+                <p className="text-[10px] text-stone-500 mt-0.5">
+                  Re-emails every currently assigned creator with their full
+                  list & CD status.
+                </p>
+              </div>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSIGNMENT MODAL (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 const AssignmentModal = ({ isOpen, onClose, pd }) => {
   if (!isOpen || !pd) return null;
 
   const pdData = pd.pd_data || {};
   const semesters = pdData.semesters || [];
-
-  // Polymorphic Section 4 extraction
   const sec4 = pdData.section4 || {};
-  const profElectives =
-    pdData.prof_electives || sec4.professionalElectives || [];
-  const openElectives = pdData.open_electives || sec4.openElectives || [];
   const techCompetency = sec4.technicalCompetencyCourses || [];
 
   return (
@@ -120,7 +196,11 @@ const AssignmentModal = ({ isOpen, onClose, pd }) => {
                 {pd.program_name} ({pd.program_id})
               </p>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-widest ${pd.scheme_year === "2026" ? "bg-indigo-100 text-indigo-700" : "bg-blue-100 text-blue-700"}`}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-widest ${
+                  pd.scheme_year === "2026"
+                    ? "bg-indigo-100 text-indigo-700"
+                    : "bg-blue-100 text-blue-700"
+                }`}
               >
                 {pd.scheme_year || "2024"} Schema
               </span>
@@ -136,7 +216,6 @@ const AssignmentModal = ({ isOpen, onClose, pd }) => {
 
         <div className="p-6 overflow-y-auto flex-1 space-y-6 bg-stone-50/50">
           {semesters.map((sem, idx) => {
-            // Polymorphic course extraction (handles both 2024 flat and 2026 categories)
             const flatCourses = sem.courses || [];
             const catCourses = (sem.categories || []).flatMap((cat) =>
               (cat.courses || []).map((c) => ({
@@ -202,7 +281,6 @@ const AssignmentModal = ({ isOpen, onClose, pd }) => {
             );
           })}
 
-          {/* 2026 Technical Competency Check */}
           {techCompetency.length > 0 && (
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
               <div className="bg-indigo-50/50 px-5 py-3 border-b border-indigo-100 flex items-center gap-2">
@@ -234,7 +312,7 @@ const AssignmentModal = ({ isOpen, onClose, pd }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ACTION MODAL (APPROVE / REJECT)
+// ACTION MODAL (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 const ActionModal = ({ isOpen, onClose, pd, onActionSubmit, submitting }) => {
   const [rejectionMsg, setMsg] = useState("");
@@ -251,7 +329,6 @@ const ActionModal = ({ isOpen, onClose, pd, onActionSubmit, submitting }) => {
     { label: "Section 3 – Structure", ok: !!(pdData.semesters?.length > 0) },
     {
       label: "Section 4 – Details",
-      // Fixed for 2026/2024 polymorphism
       ok: !!(
         pdData.prof_electives?.length > 0 ||
         pdData.section4?.technicalCompetencyCourses?.length > 0 ||
@@ -290,14 +367,18 @@ const ActionModal = ({ isOpen, onClose, pd, onActionSubmit, submitting }) => {
                 Section Validation
               </p>
               <span
-                className={`text-sm font-black ${pct === 100 ? "text-emerald-600" : "text-amber-600"}`}
+                className={`text-sm font-black ${
+                  pct === 100 ? "text-emerald-600" : "text-amber-600"
+                }`}
               >
                 {score}/{checks.length}
               </span>
             </div>
             <div className="w-full h-1.5 bg-stone-100 rounded-full mb-3 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-amber-500"}`}
+                className={`h-full rounded-full transition-all ${
+                  pct === 100 ? "bg-emerald-500" : "bg-amber-500"
+                }`}
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -316,7 +397,9 @@ const ActionModal = ({ isOpen, onClose, pd, onActionSubmit, submitting }) => {
                     />
                   )}
                   <span
-                    className={`text-xs ${ok ? "text-stone-700 font-medium" : "text-stone-400"}`}
+                    className={`text-xs ${
+                      ok ? "text-stone-700 font-medium" : "text-stone-400"
+                    }`}
                   >
                     {label}
                   </span>
@@ -364,7 +447,7 @@ const ActionModal = ({ isOpen, onClose, pd, onActionSubmit, submitting }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VERSION HISTORY MODAL
+// VERSION HISTORY MODAL (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 const VersionHistoryModal = ({
   isOpen,
@@ -466,15 +549,27 @@ const VersionHistoryModal = ({
                     </div>
                     {(v.change_summary || v.review_comment) && (
                       <div
-                        className={`p-3 rounded-xl border ${v.status === "approved" ? "bg-emerald-50 border-emerald-100" : "bg-orange-50 border-orange-100"}`}
+                        className={`p-3 rounded-xl border ${
+                          v.status === "approved"
+                            ? "bg-emerald-50 border-emerald-100"
+                            : "bg-orange-50 border-orange-100"
+                        }`}
                       >
                         <p
-                          className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${v.status === "approved" ? "text-emerald-700" : "text-orange-700"}`}
+                          className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${
+                            v.status === "approved"
+                              ? "text-emerald-700"
+                              : "text-orange-700"
+                          }`}
                         >
                           Reviewer Note
                         </p>
                         <p
-                          className={`text-sm font-medium ${v.status === "approved" ? "text-emerald-900" : "text-orange-900"}`}
+                          className={`text-sm font-medium ${
+                            v.status === "approved"
+                              ? "text-emerald-900"
+                              : "text-orange-900"
+                          }`}
                         >
                           "{v.change_summary || v.review_comment}"
                         </p>
@@ -498,7 +593,7 @@ const VersionHistoryModal = ({
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN REVIEW LIST COMPONENT
+// MAIN REVIEW LIST
 // ─────────────────────────────────────────────────────────────────────────────
 const PDReviewList = () => {
   const { axios, adminToken } = useAppContext();
@@ -515,17 +610,17 @@ const PDReviewList = () => {
   const [submittingAction, setSubmittingAction] = useState(false);
   const [historyProgramId, setHistoryProgramId] = useState(null);
 
+  // 🔔 track which card is currently sending a mail request
+  const [notifyingId, setNotifyingId] = useState(null);
+
   const fetchAllPDs = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await axios.get("/api/admin/pds/all", {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
-      if (data.success) {
-        setPds(data.pds);
-      } else {
-        toast.error(data.message || "Could not load documents");
-      }
+      if (data.success) setPds(data.pds);
+      else toast.error(data.message || "Could not load documents");
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not load documents");
     } finally {
@@ -537,9 +632,62 @@ const PDReviewList = () => {
     if (adminToken) fetchAllPDs();
   }, [adminToken, fetchAllPDs]);
 
-  // Handle Search Filtering, Status Filtering, Schema Filtering AND Deduplication
+  // 🔔 Notify — diff based. Backend compares against last-known snapshot and
+  // only emails creators who had courses added or removed since the last mail.
+  const handleNotifyNew = async (pd) => {
+    setNotifyingId(pd._id);
+    try {
+      const { data } = await axios.post(
+        `/api/admin/reviews/pd/${pd._id}/notify-new`,
+        {},
+        { headers: { Authorization: `Bearer ${adminToken}` } },
+      );
+      if (data.success) {
+        toast.success(
+          data.notifiedCount > 0
+            ? `Emailed ${data.notifiedCount} creator(s) about assignment changes.`
+            : "No assignment changes to notify.",
+        );
+      } else {
+        toast.error(data.message || "Notify failed.");
+      }
+    } catch (err) {
+      toast.error(
+        err?.response?.data?.message || "Could not notify assignees.",
+      );
+    } finally {
+      setNotifyingId(null);
+    }
+  };
+
+  // 🔔 Reminder — re-emails every currently assigned creator with their full
+  // list and each course's CD status.
+  const handleRemind = async (pd) => {
+    setNotifyingId(pd._id);
+    try {
+      const { data } = await axios.post(
+        `/api/admin/reviews/pd/${pd._id}/remind`,
+        {},
+        { headers: { Authorization: `Bearer ${adminToken}` } },
+      );
+      if (data.success) {
+        toast.success(
+          data.notifiedCount > 0
+            ? `Reminder sent to ${data.notifiedCount} creator(s).`
+            : "No creators to notify.",
+        );
+      } else {
+        toast.error(data.message || "Reminder failed.");
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not send reminder.");
+    } finally {
+      setNotifyingId(null);
+    }
+  };
+
+  // Dedupe + filter
   const latestFilteredPds = useMemo(() => {
-    // 1. Deduplicate by program_id, keeping the newest version
     const map = new Map();
     pds.forEach((pd) => {
       const existing = map.get(pd.program_id);
@@ -553,19 +701,14 @@ const PDReviewList = () => {
 
     let matched = Array.from(map.values());
 
-    // 2. Filter by status
-    if (statusFilter !== "All") {
+    if (statusFilter !== "All")
       matched = matched.filter((pd) => pd.status === statusFilter);
-    }
 
-    // 3. Filter by schema
-    if (schemaFilter !== "All") {
+    if (schemaFilter !== "All")
       matched = matched.filter(
         (pd) => (pd.scheme_year || "2024") === schemaFilter,
       );
-    }
 
-    // 4. Filter by search term
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
       matched = matched.filter(
@@ -576,7 +719,6 @@ const PDReviewList = () => {
       );
     }
 
-    // Sort by date descending
     return matched.sort(
       (a, b) => new Date(b.updated_at) - new Date(a.updated_at),
     );
@@ -588,7 +730,7 @@ const PDReviewList = () => {
       metaData: {
         programName: pd.program_name,
         programCode: pd.program_id,
-        schemaVersion: pd.scheme_year || "2024", // Critical for Preview.jsx
+        schemaVersion: pd.scheme_year || "2024",
         schemeYear: pd.scheme_year || "2024",
         versionNo: pd.version_no,
         effectiveAy: pd.effective_ay,
@@ -604,7 +746,6 @@ const PDReviewList = () => {
         { status, rejectionMessage },
         { headers: { Authorization: `Bearer ${adminToken}` } },
       );
-
       if (data.success) {
         toast.success(
           status === "approved"
@@ -626,7 +767,7 @@ const PDReviewList = () => {
   return (
     <AdminLayout>
       <div className="space-y-6 max-w-7xl pb-10">
-        {/* ── HEADER ──────────────────────────────────────────────────── */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -650,10 +791,9 @@ const PDReviewList = () => {
           </button>
         </div>
 
-        {/* ── FILTER BAR ──────────────────────────────────────────────── */}
+        {/* Filter bar */}
         <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-4">
           <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-            {/* Search */}
             <div className="relative w-full md:w-96">
               <Search
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"
@@ -677,7 +817,6 @@ const PDReviewList = () => {
             </div>
 
             <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
-              {/* Schema Filter */}
               <div className="flex items-center bg-stone-50 border border-stone-200 rounded-xl overflow-hidden p-1 shadow-sm">
                 <span className="text-[10px] font-bold text-stone-500 px-2 uppercase tracking-widest hidden sm:block">
                   Schema:
@@ -701,7 +840,6 @@ const PDReviewList = () => {
                 ))}
               </div>
 
-              {/* Status Tabs */}
               <div className="flex flex-wrap items-center gap-1.5 bg-stone-100 p-1.5 rounded-xl w-full md:w-auto overflow-x-auto scrollbar-hide">
                 {STATUS_OPTIONS.map((s) => (
                   <StatusPill
@@ -716,7 +854,7 @@ const PDReviewList = () => {
           </div>
         </div>
 
-        {/* ── CARD GRID LAYOUT ────────────────────────────────────────── */}
+        {/* Card grid */}
         {loading ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {[...Array(4)].map((_, i) => (
@@ -745,15 +883,27 @@ const PDReviewList = () => {
             {latestFilteredPds.map((pd) => (
               <div
                 key={pd._id}
-                className={`bg-white rounded-3xl border shadow-sm hover:shadow-lg transition-all flex flex-col overflow-hidden group ${pd.scheme_year === "2026" ? "border-indigo-100 hover:border-indigo-300" : "border-stone-200 hover:border-blue-300"}`}
+                className={`bg-white rounded-3xl border shadow-sm hover:shadow-lg transition-all flex flex-col overflow-hidden group ${
+                  pd.scheme_year === "2026"
+                    ? "border-indigo-100 hover:border-indigo-300"
+                    : "border-stone-200 hover:border-blue-300"
+                }`}
               >
-                {/* Card Header */}
+                {/* Header */}
                 <div
-                  className={`p-6 border-b flex items-start justify-between gap-4 ${pd.scheme_year === "2026" ? "bg-indigo-50/30 border-indigo-50" : "bg-stone-50/30 border-stone-100"}`}
+                  className={`p-6 border-b flex items-start justify-between gap-4 ${
+                    pd.scheme_year === "2026"
+                      ? "bg-indigo-50/30 border-indigo-50"
+                      : "bg-stone-50/30 border-stone-100"
+                  }`}
                 >
                   <div className="flex items-start gap-4 min-w-0">
                     <div
-                      className={`p-3.5 rounded-2xl flex-shrink-0 border shadow-sm ${pd.scheme_year === "2026" ? "bg-indigo-100 text-indigo-700 border-indigo-200" : "bg-amber-100 text-amber-700 border-amber-200"}`}
+                      className={`p-3.5 rounded-2xl flex-shrink-0 border shadow-sm ${
+                        pd.scheme_year === "2026"
+                          ? "bg-indigo-100 text-indigo-700 border-indigo-200"
+                          : "bg-amber-100 text-amber-700 border-amber-200"
+                      }`}
                     >
                       <FileText size={24} />
                     </div>
@@ -765,13 +915,15 @@ const PDReviewList = () => {
                         {pd.program_name || "Untitled Program"}
                       </h2>
                       <div className="flex items-center flex-wrap gap-2">
-                        {/* Schema Tag - The key addition requested */}
                         <span
-                          className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest border shadow-sm ${pd.scheme_year === "2026" ? "text-indigo-700 bg-indigo-50 border-indigo-200" : "text-blue-700 bg-blue-50 border-blue-200"}`}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest border shadow-sm ${
+                            pd.scheme_year === "2026"
+                              ? "text-indigo-700 bg-indigo-50 border-indigo-200"
+                              : "text-blue-700 bg-blue-50 border-blue-200"
+                          }`}
                         >
                           {pd.scheme_year || "2024"} Schema
                         </span>
-
                         <span className="text-[10px] font-bold bg-white text-stone-700 px-2.5 py-1 rounded-full border border-stone-200 uppercase tracking-widest shadow-sm">
                           {pd.program_id}
                         </span>
@@ -788,7 +940,7 @@ const PDReviewList = () => {
                   </div>
                 </div>
 
-                {/* Card Body */}
+                {/* Body */}
                 <div className="p-6 flex-1 grid grid-cols-2 gap-6">
                   <div>
                     <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">
@@ -831,27 +983,45 @@ const PDReviewList = () => {
                   </div>
                 </div>
 
-                {/* Reviewer Note if available */}
+                {/* Note */}
                 {(pd.review_comment || pd.change_summary) && (
                   <div
-                    className={`mx-6 mb-4 p-4 rounded-xl border ${pd.status === "approved" ? "bg-emerald-50/50 border-emerald-100" : pd.status === "rejected" ? "bg-red-50/50 border-red-100" : "bg-orange-50/50 border-orange-100"}`}
+                    className={`mx-6 mb-4 p-4 rounded-xl border ${
+                      pd.status === "approved"
+                        ? "bg-emerald-50/50 border-emerald-100"
+                        : pd.status === "rejected"
+                          ? "bg-red-50/50 border-red-100"
+                          : "bg-orange-50/50 border-orange-100"
+                    }`}
                   >
                     <p
-                      className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${pd.status === "approved" ? "text-emerald-700" : pd.status === "rejected" ? "text-red-700" : "text-orange-700"}`}
+                      className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${
+                        pd.status === "approved"
+                          ? "text-emerald-700"
+                          : pd.status === "rejected"
+                            ? "text-red-700"
+                            : "text-orange-700"
+                      }`}
                     >
                       Admin Note
                     </p>
                     <p
-                      className={`text-sm font-medium leading-snug line-clamp-2 ${pd.status === "approved" ? "text-emerald-900" : pd.status === "rejected" ? "text-red-900" : "text-orange-900"}`}
+                      className={`text-sm font-medium leading-snug line-clamp-2 ${
+                        pd.status === "approved"
+                          ? "text-emerald-900"
+                          : pd.status === "rejected"
+                            ? "text-red-900"
+                            : "text-orange-900"
+                      }`}
                     >
                       "{pd.review_comment || pd.change_summary}"
                     </p>
                   </div>
                 )}
 
-                {/* Card Actions */}
+                {/* Actions */}
                 <div className="p-5 border-t border-stone-100 bg-stone-50/50 flex flex-col sm:flex-row items-center justify-between gap-3">
-                  <div className="flex gap-2 w-full sm:w-auto">
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                     <button
                       onClick={() => handlePreviewClick(pd)}
                       className="flex-1 sm:flex-none justify-center inline-flex items-center gap-1.5 px-4 py-2.5 bg-white border border-stone-200 text-stone-700 rounded-xl text-xs font-bold hover:bg-stone-50 transition-colors shadow-sm"
@@ -871,6 +1041,16 @@ const PDReviewList = () => {
                     >
                       <History size={15} /> History
                     </button>
+
+                    {/* Notify — only when approved */}
+                    {pd.status === "approved" && (
+                      <NotifyDropdown
+                        pd={pd}
+                        busy={notifyingId === pd._id}
+                        onNotifyNew={() => handleNotifyNew(pd)}
+                        onRemind={() => handleRemind(pd)}
+                      />
+                    )}
                   </div>
 
                   {pd.status === "under_review" && (
@@ -896,7 +1076,7 @@ const PDReviewList = () => {
         )}
       </div>
 
-      {/* ── MODALS ── */}
+      {/* Modals */}
       {previewData && (
         <Preview
           isModal={true}

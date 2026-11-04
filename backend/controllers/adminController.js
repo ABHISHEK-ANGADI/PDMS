@@ -568,47 +568,62 @@ export const getCDVersionsForAdmin = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NEW: FETCH CDs GROUPED BY PROGRAM DOCUMENT (UPDATED FOR 2026 SCHEMA)
+// getGroupedCDReviews
+//
+// Returns ONE ROW per program. Each row contains:
+//   • currentVersion  → newest approved PD (fallback: newest of any status)
+//   • versions[]      → EVERY PD of that program (newest first)
+//
+// Each version carries its own courses[] and stats so the frontend can
+// swap between versions client-side without extra round trips.
+//
+// Fields preserved on `version` objects so the frontend can render the
+// full timeline metadata (badges, timestamps, authors, creator names).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getGroupedCDReviews = async (req, res) => {
   try {
     const adminId = req.admin._id;
     const filter = await getJurisdictionFilter(req.admin);
 
-    // 1. Get all PDs for this admin
-    const pds = await PD.find({
-      approved_by: adminId,
-      status: { $in: ["approved", "under_review", "draft"] },
-    }).select("program_id program_name pd_data version_no status");
+    // 1. Every PD this admin owns — ALL statuses, ALL versions, sorted
+    //    newest first. This is the source of truth for the program list.
+    const pds = await PD.find({ approved_by: adminId })
+      .populate("created_by", "name email")
+      .populate("approved_by", "name email")
+      .select(
+        "program_id program_name pd_data version_no status scheme_year " +
+          "effective_ay updated_at created_at total_credits academic_credits",
+      )
+      .sort({ updated_at: -1, created_at: -1 });
 
-    // 2. Get all CDs in admin's jurisdiction
+    // 2. CDs in admin's jurisdiction, newest first
     const allCDs = await CourseDocument.find(filter)
       .populate("createdBy", "name email")
+      .populate("approvedBy", "name email")
       .populate("section1_identity")
       .populate("section2_outcomes")
       .populate("section3_syllabus")
       .populate("section4_resources")
-      .sort({ createdAt: -1 });
+      .sort({ updatedAt: -1 });
 
-    // Deduplicate CDs: Keep only the latest version of each courseCode
-    const latestCDsMap = new Map();
+    // 3. Group CDs by course code — but keep the FULL version list per code
+    //    so a versioned timeline can be built later if needed.
+    const cdsByCode = new Map();
     allCDs.forEach((cd) => {
-      if (
-        !latestCDsMap.has(cd.courseCode) ||
-        new Date(cd.updatedAt) >
-          new Date(latestCDsMap.get(cd.courseCode).updatedAt)
-      ) {
-        latestCDsMap.set(cd.courseCode, cd);
-      }
+      if (!cdsByCode.has(cd.courseCode)) cdsByCode.set(cd.courseCode, []);
+      cdsByCode.get(cd.courseCode).push(cd);
     });
 
-    const groupedData = [];
-    const processedCourseCodes = new Set();
+    // Helper: resolve the best (freshest) CD per course code
+    const latestCDFor = (code) => {
+      const list = cdsByCode.get(code) || [];
+      return list[0] || null;
+    };
 
-    // 3. Map CDs into their respective PDs
-    for (const pd of pds) {
+    // Helper: turn a PD's pd_data into the course list the reviewer sees
+    const buildCoursesForPD = (pd) => {
       const pdCourses = [];
-      let stats = {
+      const stats = {
         approved: 0,
         underReview: 0,
         draft: 0,
@@ -616,13 +631,12 @@ export const getGroupedCDReviews = async (req, res) => {
         total: 0,
       };
 
-      const addCourseToPD = (courseObj, context) => {
+      const push = (courseObj, context) => {
         if (!courseObj || !courseObj.code) return;
         const code = courseObj.code;
         stats.total += 1;
-        processedCourseCodes.add(code);
 
-        const cd = latestCDsMap.get(code);
+        const cd = latestCDFor(code);
         if (cd) {
           if (cd.status === "Approved") stats.approved++;
           else if (cd.status === "UnderReview") stats.underReview++;
@@ -655,51 +669,133 @@ export const getGroupedCDReviews = async (req, res) => {
         }
       };
 
-      // Extract Semesters (Handles both 2024 and 2026 schema)
+      // 2024 + 2026 semester courses
       pd.pd_data?.semesters?.forEach((sem) => {
-        sem.courses?.forEach((c) => addCourseToPD(c, `Semester ${sem.sem_no}`));
+        sem.courses?.forEach((c) => push(c, `Semester ${sem.sem_no}`));
         sem.categories?.forEach((cat) =>
           cat.courses?.forEach((c) =>
-            addCourseToPD(c, `Semester ${sem.sem_no} (${cat.categoryName})`),
+            push(c, `Semester ${sem.sem_no} (${cat.categoryName})`),
           ),
         );
       });
 
-      // Extract 2024 Electives
+      // 2024 electives
       pd.pd_data?.prof_electives?.forEach((grp) =>
-        grp.courses?.forEach((c) => addCourseToPD(c, `Prof. Elective`)),
+        grp.courses?.forEach((c) => push(c, `Prof. Elective`)),
       );
       pd.pd_data?.open_electives?.forEach((grp) =>
-        grp.courses?.forEach((c) => addCourseToPD(c, `Open Elective`)),
+        grp.courses?.forEach((c) => push(c, "Open Elective")),
       );
 
-      // Extract 2026 Electives
+      // 2026 electives
       pd.pd_data?.section4?.professionalElectives?.forEach((grp) =>
-        grp.courses?.forEach((c) => addCourseToPD(c, `Prof. Elective`)),
+        grp.courses?.forEach((c) => push(c, "Prof. Elective")),
       );
       pd.pd_data?.section4?.openElectives?.forEach((grp) =>
-        grp.courses?.forEach((c) => addCourseToPD(c, `Open Elective`)),
+        grp.courses?.forEach((c) => push(c, "Open Elective")),
       );
-
-      // Extract 2026 Technical Competency Courses
       pd.pd_data?.section4?.technicalCompetencyCourses?.forEach((c) =>
-        addCourseToPD(c, `Technical Competency`),
+        push(c, "Technical Competency"),
       );
 
-      groupedData.push({
+      return { courses: pdCourses, stats };
+    };
+
+    // 4. Group PDs by program_id
+    const byProgram = new Map(); // program_id → { meta, versions: [] }
+
+    for (const pd of pds) {
+      const key = pd.program_id || String(pd._id);
+      if (!byProgram.has(key)) {
+        byProgram.set(key, {
+          programId: key,
+          programCode: pd.program_id,
+          programName: pd.program_name,
+          versions: [],
+        });
+      }
+
+      const { courses, stats } = buildCoursesForPD(pd);
+
+      byProgram.get(key).versions.push({
         pdId: pd._id,
         programCode: pd.program_id,
         programName: pd.program_name,
         pdVersion: pd.version_no,
         pdStatus: pd.status,
+        pdSchemeYear: pd.scheme_year || null,
+        pdEffectiveAy: pd.effective_ay || null,
+        pdUpdatedAt: pd.updated_at,
+        pdCreatedAt: pd.created_at,
+        pdCreatorName: pd.created_by?.name || "Admin",
+        pdReviewerName: pd.approved_by?.name || null,
+        pdTotalCredits: pd.total_credits ?? 0,
+        pdAcademicCredits: pd.academic_credits ?? 0,
         stats,
-        courses: pdCourses,
+        courses,
       });
     }
 
-    // 4. Handle "Orphan" CDs
+    // 5. For each program, sort versions newest-first and pick the current
+    const programs = [];
+    for (const [, entry] of byProgram.entries()) {
+      // sort strictly by updatedAt descending (defensive — DB already sorted)
+      entry.versions.sort(
+        (a, b) =>
+          new Date(b.pdUpdatedAt || 0) - new Date(a.pdUpdatedAt || 0),
+      );
+
+      // current = newest approved, fallback = newest of any status
+      const currentApproved = entry.versions.find(
+        (v) => v.pdStatus === "approved",
+      );
+      const current = currentApproved || entry.versions[0] || null;
+
+      programs.push({
+        programId: entry.programId,
+        programCode: entry.programCode,
+        programName: entry.programName,
+        currentVersionPdId: current?.pdId || null,
+        currentVersionNo: current?.pdVersion || null,
+        currentStatus: current?.pdStatus || null,
+        // keep flattened current-version fields for backwards compat
+        pdId: current?.pdId || null,
+        pdVersion: current?.pdVersion || null,
+        pdStatus: current?.pdStatus || null,
+        pdUpdatedAt: current?.pdUpdatedAt || null,
+        pdCreatorName: current?.pdCreatorName || null,
+        pdReviewerName: current?.pdReviewerName || null,
+        pdSchemeYear: current?.pdSchemeYear || null,
+        pdEffectiveAy: current?.pdEffectiveAy || null,
+        stats: current?.stats || {
+          approved: 0,
+          underReview: 0,
+          draft: 0,
+          missing: 0,
+          total: 0,
+        },
+        courses: current?.courses || [],
+        versions: entry.versions,
+      });
+    }
+
+    // Sort programs by most-recently-updated current version first
+    programs.sort(
+      (a, b) => new Date(b.pdUpdatedAt || 0) - new Date(a.pdUpdatedAt || 0),
+    );
+
+    // 6. Orphan CDs (course codes not referenced by ANY PD of this admin)
+    const referencedCodes = new Set();
+    for (const program of programs) {
+      for (const v of program.versions) {
+        v.courses.forEach((c) => {
+          if (c.courseCode) referencedCodes.add(c.courseCode);
+        });
+      }
+    }
+
     const orphanCourses = [];
-    let orphanStats = {
+    const orphanStats = {
       approved: 0,
       underReview: 0,
       draft: 0,
@@ -707,40 +803,79 @@ export const getGroupedCDReviews = async (req, res) => {
       total: 0,
     };
 
-    latestCDsMap.forEach((cd, code) => {
-      if (!processedCourseCodes.has(code)) {
-        orphanStats.total++;
-        if (cd.status === "Approved") orphanStats.approved++;
-        else if (cd.status === "UnderReview") orphanStats.underReview++;
-        else orphanStats.draft++;
+    cdsByCode.forEach((cdList, code) => {
+      if (referencedCodes.has(code)) return;
+      const cd = cdList[0];
+      orphanStats.total += 1;
+      if (cd.status === "Approved") orphanStats.approved++;
+      else if (cd.status === "UnderReview") orphanStats.underReview++;
+      else orphanStats.draft++;
 
-        orphanCourses.push({
-          courseCode: code,
-          courseTitle: cd.courseTitle,
-          context: "Unassigned",
-          cdData: buildFormattedCD(cd),
-          status: cd.status,
-          cdVersion: cd.cdVersion,
-          updatedAt: cd.updatedAt,
-          createdBy: cd.createdBy,
-          _id: cd._id,
-        });
-      }
+      orphanCourses.push({
+        courseCode: code,
+        courseTitle: cd.courseTitle,
+        context: "Unassigned",
+        cdData: buildFormattedCD(cd),
+        status: cd.status,
+        cdVersion: cd.cdVersion,
+        updatedAt: cd.updatedAt,
+        createdBy: cd.createdBy,
+        _id: cd._id,
+      });
     });
 
     if (orphanCourses.length > 0) {
-      groupedData.push({
-        pdId: "orphan",
+      programs.push({
+        programId: "orphan",
         programCode: "OTHER",
         programName: "Unassigned / Standalone Courses",
+        currentVersionPdId: "orphan",
+        currentVersionNo: "-",
+        currentStatus: "mixed",
+        pdId: "orphan",
         pdVersion: "-",
         pdStatus: "mixed",
+        pdUpdatedAt: null,
+        pdCreatorName: null,
+        pdReviewerName: null,
         stats: orphanStats,
         courses: orphanCourses,
+        versions: [
+          {
+            pdId: "orphan",
+            programCode: "OTHER",
+            programName: "Unassigned / Standalone Courses",
+            pdVersion: "-",
+            pdStatus: "mixed",
+            pdUpdatedAt: null,
+            pdCreatedAt: null,
+            pdCreatorName: null,
+            pdReviewerName: null,
+            stats: orphanStats,
+            courses: orphanCourses,
+          },
+        ],
       });
     }
 
-    res.status(200).json({ success: true, groupedData });
+    // ── Backwards compat: also return a flattened `groupedData` array
+    //    so any other consumer still works. It maps each program to its
+    //    CURRENT version only.
+    const groupedData = programs.map((p) => ({
+      pdId: p.currentVersionPdId,
+      programCode: p.programCode,
+      programName: p.programName,
+      pdVersion: p.currentVersionNo,
+      pdStatus: p.currentStatus,
+      stats: p.stats,
+      courses: p.courses,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      programs,       // ← new primary payload (versioned)
+      groupedData,    // ← legacy flat payload
+    });
   } catch (error) {
     console.error("getGroupedCDReviews:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -1501,19 +1636,22 @@ export const getApprovedCDsForProgram = async (req, res) => {
       return a.courseCode.localeCompare(b.courseCode);
     });
 
-    res.status(200).json({
-      success: true,
-      programInfo: {
-        programId: pd._id,
-        programCode: pd.program_id,
-        programName: pd.program_name,
-        schemeYear: pd.scheme_year,
-        versionNo: pd.version_no,
-      },
-      availableCDs,
-      totalAvailable: availableCDs.filter((c) => c.available).length,
-      totalRequired: availableCDs.length,
-    });
+  res.status(200).json({
+  success: true,
+  programInfo: {
+    programId: pd._id,
+    programCode: pd.program_id,
+    programName: pd.program_name,
+    schemeYear: pd.scheme_year,
+    versionNo: pd.version_no,
+    pdVersion: pd.version_no,
+    pdEffectiveAy: pd.effective_ay || null,
+    pdApprovedAt: pd.approved_at || pd.updated_at,
+  },
+  availableCDs,
+  totalAvailable: availableCDs.filter((c) => c.available).length,
+  totalRequired: availableCDs.length,
+});
   } catch (error) {
     console.error("getApprovedCDsForProgram:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -1720,124 +1858,240 @@ const collectPDCourses = (pd) => {
   return out;
 };
 
-// PD approved → one mail per assigned creator, listing their courses
-const notifyCDAssignees = async (pd, adminName) => {
-  const all = collectPDCourses(pd);
-  const assigned = all.filter((c) => c.assignee);
-  console.log(`📋 PD ${pd.program_id}: ${all.length} courses, ${assigned.length} with assignee refs`);
-  if (assigned.length === 0) {
-    console.log("⚠️ No assignee found. Sample course:", JSON.stringify(
-      pd.pd_data?.semesters?.[0]?.courses?.[0] ||
-      pd.pd_data?.semesters?.[0]?.categories?.[0]?.courses?.[0],
-    ));
-    return;
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// notifyCDAssignees(pd, adminName, mode)
+//
+// mode = "delta"  (default) — diff against lastKnownAssignees. Only creators
+//                             with additions or removals are emailed.
+// mode = "remind"          — everyone gets the current snapshot.
+//
+// Each mail contains:
+//   • Section A – status banner (approved / updated)
+//   • Section B – ✅ Newly Assigned Courses  (if any)
+//   • Section C – ❌ Removed Courses         (if any)
+//   • Section D – 📚 Current Assignments with per-course CD status
+//   • Section E – login + next steps
+// ─────────────────────────────────────────────────────────────────────────────
+const notifyCDAssignees = async (pd, adminName, mode = "delta") => {
+  const currentMap = await buildCurrentAssignmentMap(pd);
 
-  const ids = [...new Set(assigned.flatMap((c) => c.assignee.ids))];
-  const emails = [...new Set(assigned.flatMap((c) => c.assignee.emails))];
-
-  const creators = await Creater.find({
-    $or: [{ _id: { $in: ids } }, { email: { $in: emails } }],
-  }).select("name email");
-
-
-  const byId = new Map(creators.map((c) => [String(c._id), c]));
-  const byEmail = new Map(creators.map((c) => [String(c.email).toLowerCase(), c]));
-
-  // Group courses per creator (one mail per person)
-  const grouped = new Map();
-  for (const course of assigned) {
-    const creator =
-      course.assignee.ids.map((i) => byId.get(i)).find(Boolean) ||
-      course.assignee.emails.map((e) => byEmail.get(e)).find(Boolean);
-    if (!creator?.email) {
-      console.log("⚠️ No Creater match for course", course.code, course.assignee);
-      continue;
+  // Compute deltas
+  let targets = new Map(); // creatorId → { creator, added, removed, current }
+  if (mode === "remind") {
+    for (const [id, { creator, courses }] of currentMap.entries()) {
+      targets.set(id, { creator, added: [], removed: [], current: courses });
     }
-    const key = String(creator._id);
-    if (!grouped.has(key)) grouped.set(key, { creator, courses: [] });
-    grouped.get(key).courses.push(course);
+  } else {
+    targets = computeAssignmentDelta(pd._id, currentMap);
   }
+
+  if (targets.size === 0) {
+    console.log(
+      `ℹ️ PD ${pd.program_id}: no assignment changes to notify (mode=${mode}).`,
+    );
+    updateAssignmentCache(pd._id, currentMap);
+    return [];
+  }
+
+  // Collect every course code involved (added + current) to fetch CD status
+  const allCodes = new Set();
+  for (const { added, current } of targets.values()) {
+    added.forEach((c) => allCodes.add(c.code));
+    current.forEach((c) => allCodes.add(c.code));
+  }
+  const cdStatusMap = await getCDStatusMap([...allCodes]);
 
   const base = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
   const defaultPassword = process.env.CREATOR_DEFAULT_PASSWORD || "GMIT@2026";
   const cell = 'style="padding:8px;border:1px solid #e2e8f0;"';
+  const cellEm = 'style="padding:8px;border:1px solid #e2e8f0;color:#dc2626;"';
 
-  for (const { creator, courses } of grouped.values()) {
-    const rows = courses
-      .map(
-        (c) => `<tr>
-          <td ${cell}>${esc(c.code)}</td>
-          <td ${cell}>${esc(c.title)}</td>
-          <td ${cell}>${esc(c.context)}</td>
-          <td ${cell}>${esc(c.credits)}</td>
-        </tr>`,
-      )
-      .join("");
+  const statusLabel = (s) => {
+    switch (s) {
+      case "Approved":
+        return "✅ Approved";
+      case "UnderReview":
+        return "🟠 In Review";
+      case "Draft":
+        return "🟡 Draft";
+      case undefined:
+      case null:
+        return "⚪ Not Started";
+      default:
+        return s;
+    }
+  };
+
+  const notified = [];
+
+  for (const { creator, added, removed, current } of targets.values()) {
+    if (!creator?.email) continue;
+
+    // Section B — added courses
+    let addedHtml = "";
+    if (added.length > 0) {
+      const rows = added
+        .map(
+          (c) => `<tr>
+            <td ${cell}>${esc(c.code)}</td>
+            <td ${cell}>${esc(c.title)}</td>
+            <td ${cell}>${esc(c.context)}</td>
+            <td ${cell}>${esc(c.credits)}</td>
+          </tr>`,
+        )
+        .join("");
+      addedHtml = `
+        <h4 style="margin:20px 0 8px;color:#065f46;">
+          ✅ Newly Assigned Courses (${added.length})
+        </h4>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+          <tr style="background:#ecfdf5;">
+            <th ${cell}>Code</th><th ${cell}>Title</th>
+            <th ${cell}>Semester / Category</th><th ${cell}>Credits</th>
+          </tr>
+          ${rows}
+        </table>`;
+    }
+
+    // Section C — removed courses
+    let removedHtml = "";
+    if (removed.length > 0) {
+      const rows = removed
+        .map(
+          (c) => `<tr>
+            <td ${cellEm}>${esc(c.code)}</td>
+            <td ${cellEm}>— (no longer assigned)</td>
+          </tr>`,
+        )
+        .join("");
+      removedHtml = `
+        <h4 style="margin:20px 0 8px;color:#991b1b;">
+          ❌ Removed Courses (${removed.length})
+        </h4>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+          <tr style="background:#fef2f2;">
+            <th ${cell}>Code</th><th ${cell}>Note</th>
+          </tr>
+          ${rows}
+        </table>
+        <p style="font-size:13px;color:#7f1d1d;">
+          You are no longer responsible for creating the CD(s) listed above.
+          Any drafts you started for them can be ignored.
+        </p>`;
+    }
+
+    // Section D — current snapshot + CD status
+    let currentHtml = "";
+    if (current.length > 0) {
+      const rows = current
+        .map((c) => {
+          const st = cdStatusMap.get(c.code);
+          return `<tr>
+            <td ${cell}>${esc(c.code)}</td>
+            <td ${cell}>${esc(c.title)}</td>
+            <td ${cell}>${esc(c.context)}</td>
+            <td ${cell}>${esc(c.credits)}</td>
+            <td ${cell}>${statusLabel(st?.status)}</td>
+          </tr>`;
+        })
+        .join("");
+      currentHtml = `
+        <h4 style="margin:20px 0 8px;">📚 Your Current Assignments (${current.length})</h4>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+          <tr style="background:#f1f5f9;">
+            <th ${cell}>Code</th><th ${cell}>Title</th>
+            <th ${cell}>Semester / Category</th><th ${cell}>Credits</th>
+            <th ${cell}>CD Status</th>
+          </tr>
+          ${rows}
+        </table>`;
+    }
+
+    // Headline depends on the scenario
+    const hasAdd = added.length > 0;
+    const hasRem = removed.length > 0;
+    const headline = hasAdd && hasRem
+      ? "Your CD Assignments Have Been Updated"
+      : hasAdd
+        ? "New Courses Assigned to You"
+        : hasRem
+          ? "Some Courses Have Been Reassigned"
+          : "Your Current CD Assignments";
+
+    const intro = `<p>Dear ${esc(creator.name)},</p>
+      <p>The Program Document <b>${esc(pd.program_name)} (${esc(pd.program_id)})</b>
+      is <b>${esc(pd.status === "approved" ? "approved" : pd.status)}</b> and
+      your assignment list has changed. Here is exactly what's different:</p>`;
 
     const html = mailWrap(
-      "Program Document Approved – Create your CD",
-      `<p>Dear ${esc(creator.name)},</p>
-       <p>The Program Document <b>${esc(pd.program_name)} (${esc(pd.program_id)})</b>
-       has been approved by <b>${esc(adminName || "Admin")}</b>.
-       You can now create the Course Document (CD) for your assigned course(s):</p>
+      headline,
+      `${intro}
+       ${addedHtml}
+       ${removedHtml}
+       ${currentHtml}
 
-       <table style="border-collapse:collapse;width:100%;font-size:14px;">
-         <tr style="background:#f1f5f9;">
-           <th ${cell}>Code</th><th ${cell}>Title</th><th ${cell}>Semester / Category</th><th ${cell}>Credits</th>
-         </tr>
-         ${rows}
-       </table>
-
-       <p style="font-size:14px;">
+       <p style="font-size:14px;margin-top:20px;">
          <b>Program:</b> ${esc(pd.program_name)}<br/>
          <b>Program Code:</b> ${esc(pd.program_id)}<br/>
          <b>Scheme Year:</b> ${esc(pd.scheme_year)}<br/>
          <b>PD Version:</b> ${esc(pd.version_no)}<br/>
-         <b>Effective AY:</b> ${esc(pd.effective_ay || "-")}
+         <b>Effective AY:</b> ${esc(pd.effective_ay || "-")}<br/>
+         <b>Reviewed By:</b> ${esc(adminName || "Admin")}
        </p>
 
        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14px;">
          <b>Your login details (for reference)</b><br/>
          <b>Login Email:</b> ${esc(creator.email)}<br/>
          <b>Login Password:</b> ${esc(defaultPassword)}<br/>
-         <span style="font-size:12px;color:#64748b;">Please change your password after your first login.</span>
+         <span style="font-size:12px;color:#64748b;">Please change your password after first login.</span>
        </div>
 
-       <h4 style="margin:18px 0 8px;">Steps to create your Course Document</h4>
+       <h4 style="margin:18px 0 8px;">What to do next</h4>
        <ol style="font-size:14px;line-height:1.7;padding-left:20px;margin:0;">
-         <li>Log in with the email and password above${base ? ` at <a href="${base}">${base}</a>` : ""}.</li>
-         <li>Open the <b>Course Document Editor</b> and click <b>Assigned</b>. Find your course and click <b>Load Task</b>.</li>
-         <li><b>Important:</b> before you start, click the <b>Latest</b> button. It fetches the most recent version of this course so you continue from it instead of starting blank. If no earlier version exists, you will start a new draft (v1.0.0).</li>
-         <li>Fill in the four steps, using <b>Save &amp; Next</b> or <b>Save Draft</b> as you go:
-           <ul style="margin:4px 0;">
-             <li><b>Step 1 – Course Info:</b> identity details, credits and hours. You can also import from a PDF.</li>
-             <li><b>Step 2 – Course Details:</b> aims, objectives, outcomes (COs), outcome mapping, course content and resources.</li>
-             <li><b>Step 3 – Teaching &amp; Assess:</b> teaching schedule, assessment weights, grading criterion and attainment.</li>
-             <li><b>Step 4 – Other Details:</b> assignment details and academic integrity.</li>
-           </ul>
-         </li>
-         <li>Click <b>Preview</b> to check the final document.</li>
-         <li>Click <b>Submit</b>, select the Admin / Reviewer, then <b>Confirm Submit</b>.</li>
-         <li><b>Versions:</b> saving a draft updates that same draft. Once a version is <i>Submitted</i> or <i>Approved</i>, your next save or submit creates a <b>new version</b> (for example 1.0.0 → 1.0.1), and the earlier version stays in history. Open <b>Sections → Version History</b> to see them all.</li>
-         <li>If the Admin returns your CD with comments, click <b>Latest</b>, make the changes and submit again. You will receive an email once it is approved.</li>
+         <li>Log in${base ? ` at <a href="${base}">${base}</a>` : ""}.</li>
+         <li>Open <b>Course Document Editor → Assigned</b> and load each course.</li>
+         <li>Click <b>Latest</b> before starting so you continue from the newest version.</li>
+         <li>Only start CDs for the courses still listed under <i>Your Current Assignments</i>.</li>
+         <li>Submit the completed CD and wait for the Admin's approval.</li>
        </ol>
 
        ${base ? `<p><a href="${base}/creator/dashboard" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Open Dashboard</a></p>` : ""}`,
     );
 
     try {
-      await sendMail({
-        to: creator.email,
-        subject: `PD Approved – Create CDs for ${pd.program_name} (v${pd.version_no})`,
-        html,
+      const subject =
+        mode === "remind"
+          ? `Reminder – Your CD Assignments for ${pd.program_name}`
+          : hasAdd && hasRem
+            ? `Your CD Assignments Changed – ${pd.program_name}`
+            : hasAdd
+              ? `New CD Assignments – ${pd.program_name}`
+              : `Some CDs Removed – ${pd.program_name}`;
+
+      await sendMail({ to: creator.email, subject, html });
+      notified.push({
+        creater_id: creator._id,
+        added: added.map((c) => c.code),
+        removed: removed.map((c) => c.code),
       });
     } catch (err) {
-      console.error("❌ PD approval mail failed for", creator.email, "→", err.message);
+      console.error(
+        "❌ PD notification mail failed for",
+        creator.email,
+        "→",
+        err.message,
+      );
     }
   }
-};
 
+  // Snapshot is now in sync regardless of mail success — matches "best effort"
+  updateAssignmentCache(pd._id, currentMap);
+
+  console.log(
+    `📬 PD ${pd.program_id} (mode=${mode}): notified ${notified.length} creator(s).`,
+  );
+  return notified;
+};
 // CD approved → mail the creator of that CD
 const notifyCDApproved = async (cd, adminName) => {
   const creator = await Creater.findById(cd.createdBy).select("name email");
@@ -1881,35 +2135,35 @@ export const processPDReview = async (req, res) => {
     const { status, rejectionMessage } = req.body;
     const adminId = req.admin._id;
 
-    const existing = await PD.findOne({ _id: id, approved_by: adminId }).select("status");
+    const existing = await PD.findOne({ _id: id, approved_by: adminId });
     if (!existing)
       return res
         .status(403)
         .json({ success: false, message: "Unauthorized or not found" });
 
-    const updatedPD = await PD.findOneAndUpdate(
-      { _id: id, approved_by: adminId },
-      {
-        status: status,
-        change_summary: rejectionMessage || "",
-        review_comment: rejectionMessage || "",
-        approved_at: status === "approved" ? new Date() : null,
-        updated_at: new Date(),
-      },
-      { new: true },
-    );
+    const wasApproved = existing.status === "approved";
 
-    // Notify assigned CD creators only on a fresh approval (runs in background)
-    if (status === "approved" && existing.status !== "approved") {
-      notifyCDAssignees(updatedPD, req.admin.name).catch((err) =>
-        console.error("notifyCDAssignees:", err.message),
+    existing.status = status;
+    existing.change_summary = rejectionMessage || "";
+    existing.review_comment = rejectionMessage || "";
+    existing.approved_at = status === "approved" ? new Date() : null;
+    existing.updated_at = new Date();
+    await existing.save();
+
+    // On approval (fresh OR re-approval), notify everyone with a delta email.
+    // Delta = everything since last known snapshot (or the full list on the
+    // first-ever approval because the cache is empty).
+    if (status === "approved") {
+      notifyCDAssignees(existing, req.admin.name, "delta").catch((err) =>
+        console.error("processPDReview notify pipeline:", err.message),
       );
     }
 
     res.status(200).json({
       success: true,
       message: `PD ${status} successfully`,
-      data: updatedPD,
+      data: existing,
+      wasAlreadyApproved: wasApproved,
     });
   } catch (error) {
     console.error("processPDReview:", error);
@@ -1959,3 +2213,269 @@ export const processCDReview = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSIGNEE DIFF CACHE — in-memory, not persisted.
+// Key:   pdId (string)
+// Value: Map<creatorIdString, Set<courseCode>>
+//
+// Purpose: let us compute "added / removed since last mail" without touching
+// the PD document schema. Restarts lose the cache → next save sends a
+// bootstrap delta (everything counts as "added"). That's fine — mail spamming
+// is worse than a one-off catch-up mail after a server restart.
+// ─────────────────────────────────────────────────────────────────────────────
+const lastKnownAssignees = new Map();
+
+// Resolve the object-id / email pairs on a course to a Creater _id (best-effort).
+const resolveCreatorFromCourse = async (course, cache) => {
+  const ref = getAssigneeRef(course);
+  if (!ref) return null;
+
+  const or = [];
+  if (ref.ids.length) or.push({ _id: { $in: ref.ids } });
+  if (ref.emails.length) or.push({ email: { $in: ref.emails } });
+  if (!or.length) return null;
+
+  // Small cache so a PD with 100 courses doesn't hammer the DB.
+  const cacheKey = JSON.stringify(or);
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const creator = await Creater.findOne({ $or: or }).select("_id name email");
+  cache.set(cacheKey, creator);
+  return creator;
+};
+
+// Build a Map<creatorIdString, { creator, courses: [{code,title,credits,context}] }>
+// from the current PD state.
+const buildCurrentAssignmentMap = async (pd) => {
+  const cache = new Map();
+  const map = new Map();
+
+  const courses = collectPDCourses(pd);
+  for (const course of courses) {
+    if (!course.assignee) continue;
+    // reuse existing ref-checking but need the full course to resolve id
+    const rawCourse =
+      // find the raw object so we can call getAssigneeRef again inside resolve
+      // simply pass the { assignee } wrapper we already built
+      { assignee: course.assignee };
+
+    // resolve to a Creater doc
+    const or = [];
+    if (course.assignee.ids.length)
+      or.push({ _id: { $in: course.assignee.ids } });
+    if (course.assignee.emails.length)
+      or.push({ email: { $in: course.assignee.emails } });
+
+    const cacheKey = JSON.stringify(or);
+    let creator = cache.get(cacheKey);
+    if (creator === undefined) {
+      creator = await Creater.findOne({ $or: or }).select("_id name email");
+      cache.set(cacheKey, creator);
+    }
+    if (!creator) continue;
+
+    const key = String(creator._id);
+    if (!map.has(key)) map.set(key, { creator, courses: [] });
+    map.get(key).courses.push({
+      code: course.code,
+      title: course.title,
+      credits: course.credits,
+      context: course.context,
+    });
+  }
+
+  return map;
+};
+
+// Compute { added: [{code,...}], removed: [{code,...}], current: [...] } per
+// creator between the last cache snapshot and the current PD.
+const computeAssignmentDelta = (pdId, currentMap) => {
+  const prev = lastKnownAssignees.get(String(pdId)) || new Map();
+  const perCreator = new Map(); // creatorId → { creator, added, removed, current }
+
+  // Added / current
+  for (const [creatorId, { creator, courses }] of currentMap.entries()) {
+    const prevSet = prev.get(creatorId) || new Set();
+    const currCodes = new Set(courses.map((c) => c.code));
+
+    const added = courses.filter((c) => !prevSet.has(c.code));
+    const current = courses;
+
+    if (added.length > 0 || !prev.has(creatorId)) {
+      perCreator.set(creatorId, { creator, added, removed: [], current });
+    } else {
+      // even with no additions, keep entry so we can attach removals below
+      perCreator.set(creatorId, { creator, added: [], removed: [], current });
+    }
+  }
+
+  // Removed
+  for (const [creatorId, prevCodes] of prev.entries()) {
+    const currEntry = currentMap.get(creatorId);
+    const currCodes = new Set(
+      currEntry ? currEntry.courses.map((c) => c.code) : [],
+    );
+
+    const removedCodes = [...prevCodes].filter((c) => !currCodes.has(c));
+    if (removedCodes.length === 0) continue;
+
+    // Build removed objects — we only have prev codes; PD data no longer has
+    // these courses so we can't get title/credits. Leave minimal info.
+    const removed = removedCodes.map((code) => ({ code }));
+
+    if (perCreator.has(creatorId)) {
+      perCreator.get(creatorId).removed = removed;
+    } else {
+      // Creator is no longer assigned anything at all
+      perCreator.set(creatorId, {
+        creator: currEntry?.creator || null,
+        added: [],
+        removed,
+        current: [],
+      });
+    }
+  }
+
+  return perCreator;
+};
+
+// Update the cache snapshot after a successful notify pass.
+const updateAssignmentCache = (pdId, currentMap) => {
+  const snapshot = new Map();
+  for (const [creatorId, { courses }] of currentMap.entries()) {
+    snapshot.set(creatorId, new Set(courses.map((c) => c.code)));
+  }
+  lastKnownAssignees.set(String(pdId), snapshot);
+};
+
+// Look up CD status for every course code in one batch.
+// Returns Map<code, { status, version }>
+const getCDStatusMap = async (codes) => {
+  if (!codes.length) return new Map();
+
+  const cds = await CourseDocument.find({
+    courseCode: { $in: codes },
+  })
+    .sort({ updatedAt: -1 })
+    .select("courseCode status cdVersion updatedAt");
+
+  const map = new Map();
+  for (const cd of cds) {
+    // keep the freshest version per code (sort desc already)
+    if (!map.has(cd.courseCode)) {
+      map.set(cd.courseCode, {
+        status: cd.status, // "Approved" | "UnderReview" | "Draft" | ...
+        version: cd.cdVersion,
+      });
+    }
+  }
+  return map;
+};  
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/reviews/pd/:id/remind
+// Emails EVERY currently-assigned creator with the full assignment list and
+// each course's CD status. No diffing — admin asked to remind everyone.
+// ─────────────────────────────────────────────────────────────────────────────
+export const remindPDCreators = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.admin._id;
+
+    const pd = await PD.findOne({ _id: id, approved_by: adminId });
+    if (!pd)
+      return res
+        .status(404)
+        .json({ success: false, message: "PD not found or access denied" });
+
+    if (pd.status !== "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Reminders can only be sent for approved PDs.",
+      });
+    }
+
+    const notified = await notifyCDAssignees(pd, req.admin.name, "remind");
+
+    res.status(200).json({
+      success: true,
+      message:
+        notified.length > 0
+          ? `Reminder sent to ${notified.length} creator(s).`
+          : "No creators to notify.",
+      notifiedCount: notified.length,
+      notified,
+    });
+  } catch (error) {
+    console.error("remindPDCreators:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/reviews/pd/:id/notify-new
+// Emails only creators who have additions or removals since the last snapshot.
+// If the server was restarted (cache lost) this falls back to a bootstrap
+// delta (everything appears as "newly added") for the first creator batch.
+// ─────────────────────────────────────────────────────────────────────────────
+export const notifyPDNewAssignees = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.admin._id;
+
+    const pd = await PD.findOne({ _id: id, approved_by: adminId });
+    if (!pd)
+      return res
+        .status(404)
+        .json({ success: false, message: "PD not found or access denied" });
+
+    if (pd.status !== "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Only approved PDs can trigger notifications.",
+      });
+    }
+
+    const notified = await notifyCDAssignees(pd, req.admin.name, "delta");
+
+    res.status(200).json({
+      success: true,
+      message:
+        notified.length > 0
+          ? `Notified ${notified.length} creator(s) of assignment changes.`
+          : "No new assignment changes to notify.",
+      notifiedCount: notified.length,
+      notified,
+    });
+  } catch (error) {
+    console.error("notifyPDNewAssignees:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+// POST /api/admin/reviews/pd/:id/sync-assignees
+export const syncPDAssignees = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pd = await PD.findById(id);
+    if (!pd)
+      return res
+        .status(404)
+        .json({ success: false, message: "PD not found" });
+    if (pd.status !== "approved") {
+      return res
+        .status(400)
+        .json({ success: false, message: "PD is not approved yet." });
+    }
+    const notified = await notifyCDAssignees(pd, "System", "delta");
+    res.status(200).json({
+      success: true,
+      notifiedCount: notified.length,
+      notified,
+    });
+  } catch (error) {
+    console.error("syncPDAssignees:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+

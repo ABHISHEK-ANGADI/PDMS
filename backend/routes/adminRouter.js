@@ -26,6 +26,9 @@ import {
   getApprovedCDsForProgram,
   getCDByCourseCode,
   getCDDetailById,
+  remindPDCreators,
+  notifyPDNewAssignees,
+  syncPDAssignees,
 } from "../controllers/adminController.js";
 import authAdmin from "../middlewares/adminAuth.js";
 
@@ -47,6 +50,9 @@ adminRouter.get("/approved/pds", getApprovedPDs);
 adminRouter.get("/reviews/pd/:id", getPDDetail);
 adminRouter.get("/reviews/pd/:programId/versions", getPDVersionsForAdmin);
 adminRouter.put("/reviews/pd/:id", processPDReview);
+adminRouter.post("/reviews/pd/:id/remind", remindPDCreators);
+adminRouter.post("/reviews/pd/:id/notify-new", notifyPDNewAssignees);
+adminRouter.post("/reviews/pd/:id/sync-assignees", syncPDAssignees);
 
 // CD Reviews
 adminRouter.get("/reviews/cds", getPendingCDs);
@@ -54,6 +60,8 @@ adminRouter.get("/reviews/cds/grouped", getGroupedCDReviews);
 adminRouter.get("/reviews/cd/:id", getCDDetail);
 adminRouter.get("/reviews/cd/:courseCode/versions", getCDVersionsForAdmin);
 adminRouter.put("/reviews/cd/:id", processCDReview);
+
+
 
 // Curriculum Compiler
 adminRouter.get("/compiler/readiness/:programId", checkProgramReadiness);

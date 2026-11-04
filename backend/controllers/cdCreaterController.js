@@ -115,6 +115,169 @@ const resolveCDsForPDVersion = (allCdsForCourse, currentPdVersion) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// resolveNewestApprovedPDsForCreator
+//
+// Returns ONE PD per program_id: the newest APPROVED version of that program.
+//
+// Crucially, this does NOT filter by whether the creator is present in that
+// PD. That's the whole point: an *older* approved PD that still lists the
+// creator must never resurrect a stale assignment once the newest approved
+// PD has removed them. The caller then walks the returned PD(s) and keeps
+// only the courses that actually still belong to this creator.
+//
+// Fallback: if a program has NO approved PD yet, we use the newest
+// draft / under_review version so a creator can still see pending work.
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolveNewestApprovedPDsForCreator(creatorId) {
+  const creatorKey = String(creatorId);
+
+  // 1. Find every PD that mentions this creator somewhere — this is only
+  //    used as a *starting point* to know which programs are relevant.
+  //    We deliberately do NOT restrict by status here.
+  const pdFilter = {
+    $or: [
+      { "pd_data.semesters.courses.assigneeId": creatorKey },
+      { "pd_data.semesters.categories.courses.assigneeId": creatorKey },
+      {
+        "pd_data.section4.professionalElectives.courses.assigneeId":
+          creatorKey,
+      },
+      { "pd_data.section4.openElectives.courses.assigneeId": creatorKey },
+      {
+        "pd_data.section4.technicalCompetencyCourses.assigneeId":
+          creatorKey,
+      },
+    ],
+  };
+
+  const creatorTouchedPDs = await PD.find(pdFilter)
+    .select("program_id status updated_at updatedAt")
+    .lean();
+
+  if (creatorTouchedPDs.length === 0) return [];
+
+  // 2. From those, collect the unique set of program_ids this creator was
+  //    ever assigned in (any version, any status).
+  const programIds = [
+    ...new Set(creatorTouchedPDs.map((pd) => pd.program_id).filter(Boolean)),
+  ];
+  if (programIds.length === 0) return [];
+
+  // 3. For each program, fetch ALL its versions (all statuses). Then pick:
+  //      a) the newest APPROVED version, if any exists
+  //      b) otherwise the newest version of any status
+  //    The chosen version is the SINGLE source of truth for that program.
+  const allProgramPDs = await PD.find({
+    program_id: { $in: programIds },
+  })
+    .populate("created_by", "name email")
+    .populate("approved_by", "name email")
+    .sort({ updated_at: -1, updatedAt: -1, created_at: -1, createdAt: -1 })
+    .lean();
+
+  const byProgram = new Map(); // programId → { approved, latest }
+
+  for (const pd of allProgramPDs) {
+    const key = pd.program_id;
+    if (!byProgram.has(key)) byProgram.set(key, { approved: null, latest: null });
+    const entry = byProgram.get(key);
+
+    const thisAt = new Date(pd.updated_at ?? pd.updatedAt ?? 0);
+
+    // Latest of any status
+    if (!entry.latest) entry.latest = pd;
+    else {
+      const latestAt = new Date(
+        entry.latest.updated_at ?? entry.latest.updatedAt ?? 0,
+      );
+      if (thisAt > latestAt) entry.latest = pd;
+    }
+
+    // Latest approved
+    if (pd.status === "approved") {
+      if (!entry.approved) entry.approved = pd;
+      else {
+        const approvedAt = new Date(
+          entry.approved.updated_at ?? entry.approved.updatedAt ?? 0,
+        );
+        if (thisAt > approvedAt) entry.approved = pd;
+      }
+    }
+  }
+
+  const effectivePDs = [];
+  for (const [, { approved, latest }] of byProgram.entries()) {
+    if (approved) effectivePDs.push(approved);
+    else if (latest) effectivePDs.push(latest);
+  }
+  return effectivePDs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extractCoursesOwnedByCreator
+//
+// Walk a single PD and return only the courses where assigneeId === creatorId,
+// along with per-course context metadata.
+// ─────────────────────────────────────────────────────────────────────────────
+function extractCoursesOwnedByCreator(pd, creatorId) {
+  const creatorKey = String(creatorId);
+  const isMine = (c) => c?.assigneeId && String(c.assigneeId) === creatorKey;
+
+  const out = [];
+  const pushCourse = (c, context, type) => {
+    if (!isMine(c)) return;
+    if (!c.code) return;
+    out.push({
+      courseCode: c.code,
+      courseTitle: c.title,
+      programName: pd.program_name,
+      programCode: pd.program_id,
+      type: c.type || type || "Theory",
+      credits: c.credits,
+      context,
+      pdCreatorName: pd.created_by?.name || "Admin",
+      pdReviewerName: pd.approved_by?.name || null,
+      pdId: pd._id,
+      pdVersion: pd.version_no ?? null,
+      pdSchemeYear: pd.scheme_year ?? null,
+      pdEffectiveAy: pd.effective_ay ?? null,
+      pdStatus: pd.status ?? null,
+      pdUpdatedAt: pd.updated_at ?? pd.updatedAt ?? null,
+      pdCreatedAt: pd.created_at ?? pd.createdAt ?? null,
+    });
+  };
+
+  pd.pd_data?.semesters?.forEach((sem) => {
+    sem.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no}`));
+    sem.categories?.forEach((cat) => {
+      cat.courses?.forEach((c) =>
+        pushCourse(c, `Semester ${sem.sem_no} (${cat.categoryName})`),
+      );
+    });
+  });
+
+  pd.pd_data?.section4?.professionalElectives?.forEach((grp, gi) => {
+    grp.courses?.forEach((c) =>
+      pushCourse(
+        c,
+        grp.title || `PE Group ${gi + 1}`,
+        "Professional Elective",
+      ),
+    );
+  });
+  pd.pd_data?.section4?.openElectives?.forEach((grp, gi) => {
+    grp.courses?.forEach((c) =>
+      pushCourse(c, grp.title || `OE Group ${gi + 1}`, "Open Elective"),
+    );
+  });
+  pd.pd_data?.section4?.technicalCompetencyCourses?.forEach((c) =>
+    pushCourse(c, "Technical Competency Courses", "Technical Competency"),
+  );
+
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ADMIN SELECTION FOR REVIEW MODAL
 // ─────────────────────────────────────────────────────────────────────────────
 export const getAdminsForReview = async (req, res) => {
@@ -606,44 +769,66 @@ export const getRecentVersions = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD & ASSIGNED COURSES
-// ─────────────────────────────────────────────────────────────────────────────
 export const getCDDashboardStats = async (req, res) => {
   try {
-    const creatorId = req.id;
+    const creatorId = String(req.id);
+
+    // Newest approved PD per program — the only source of truth
+    const effectivePDs = await resolveNewestApprovedPDsForCreator(creatorId);
+
+    // Build the set of course codes the creator CURRENTLY owns
+    const currentCodes = new Set();
+    for (const pd of effectivePDs) {
+      const owned = extractCoursesOwnedByCreator(pd, creatorId);
+      owned.forEach((c) => currentCodes.add(c.courseCode));
+    }
+
+    // Stats count only this creator's CDs whose code is in the current set
+    const baseQuery = {
+      createdBy: req.id,
+      courseCode: { $in: [...currentCodes] },
+    };
+
     const [total, drafts, underReview, approved, recentDocs] =
       await Promise.all([
-        CourseDocument.countDocuments({ createdBy: creatorId }),
-        CourseDocument.countDocuments({ createdBy: creatorId, status: "Draft" }),
-        CourseDocument.countDocuments({
-          createdBy: creatorId,
-          status: "UnderReview",
-        }),
-        CourseDocument.countDocuments({
-          createdBy: creatorId,
-          status: "Approved",
-        }),
-        CourseDocument.find({ createdBy: creatorId })
+        CourseDocument.countDocuments(baseQuery),
+        CourseDocument.countDocuments({ ...baseQuery, status: "Draft" }),
+        CourseDocument.countDocuments({ ...baseQuery, status: "UnderReview" }),
+        CourseDocument.countDocuments({ ...baseQuery, status: "Approved" }),
+        CourseDocument.find(baseQuery)
           .sort({ updatedAt: -1 })
           .limit(5)
           .select("courseCode courseTitle cdVersion status updatedAt"),
       ]);
+
     return res.json({
       success: true,
       stats: { total, drafts, underReview, approved },
       recentDocs,
     });
   } catch (error) {
+    console.error("getCDDashboardStats error:", error);
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch dashboard data." });
   }
 };
-
 export const getCDCreatorHistory = async (req, res) => {
   try {
-    const allCDs = await CourseDocument.find({ createdBy: req.id })
+    const creatorId = String(req.id);
+
+    const effectivePDs = await resolveNewestApprovedPDsForCreator(creatorId);
+
+    const currentCodes = new Set();
+    for (const pd of effectivePDs) {
+      const owned = extractCoursesOwnedByCreator(pd, creatorId);
+      owned.forEach((c) => currentCodes.add(c.courseCode));
+    }
+
+    const allCDs = await CourseDocument.find({
+      createdBy: req.id,
+      courseCode: { $in: [...currentCodes] },
+    })
       .populate("section1_identity")
       .populate("section2_outcomes")
       .populate("section3_syllabus")
@@ -679,6 +864,7 @@ export const getCDCreatorHistory = async (req, res) => {
       groupedData: Array.from(groupedMap.values()),
     });
   } catch (error) {
+    console.error("getCDCreatorHistory error:", error);
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch document history" });
@@ -687,135 +873,52 @@ export const getCDCreatorHistory = async (req, res) => {
 
 export const getAssignedCDs = async (req, res) => {
   try {
-    const creatorId = req.id;
-    const isMine = (c) =>
-      c?.assigneeId && String(c.assigneeId) === String(creatorId);
+    const creatorId = String(req.id);
 
-    const pdFilter = {
-      $or: [
-        { "pd_data.semesters.courses.assigneeId": creatorId },
-        { "pd_data.semesters.categories.courses.assigneeId": creatorId },
-        { "pd_data.section4.professionalElectives.courses.assigneeId": creatorId },
-        { "pd_data.section4.openElectives.courses.assigneeId": creatorId },
-        { "pd_data.section4.technicalCompetencyCourses.assigneeId": creatorId },
-      ],
-    };
+    // 1. Newest APPROVED PD per program (this is the ONLY version that counts
+    //    for the creator's current assignments). Older approved versions are
+    //    ignored even if they still list the creator.
+    const effectivePDs = await resolveNewestApprovedPDsForCreator(creatorId);
 
-    let pds;
-    try {
-      pds = await PD.find(pdFilter)
-        .populate("created_by", "name email")
-        .populate("approved_by", "name email")
-        .lean();
-    } catch (popErr) {
-      console.warn("getAssignedCDs: PD populate failed.", popErr.message);
-      pds = await PD.find(pdFilter).lean();
-    }
+    // 2. Walk each effective PD and keep only courses still assigned to us.
+    //    Programs where the newest version no longer mentions the creator
+    //    simply produce an empty `courses` array — and those groups are
+    //    dropped so they don't show up in the UI.
+    const pdGroups = [];
+    const allCodes = new Set();
 
-    const pdGroups = new Map();
+    for (const pd of effectivePDs) {
+      const courses = extractCoursesOwnedByCreator(pd, creatorId);
+      if (courses.length === 0) continue;
 
-    pds.forEach((pd) => {
-      const pdKey = String(pd._id);
-      const pdVersion = pd.version_no ?? null;
-      const pdUpdatedAt = pd.updated_at ?? pd.updatedAt ?? null;
-      const pdCreatedAt = pd.created_at ?? pd.createdAt ?? null;
+      courses.forEach((c) => allCodes.add(c.courseCode));
 
-      const pdMeta = {
+      pdGroups.push({
         pdId: pd._id,
-        pdVersion,
+        pdVersion: pd.version_no ?? null,
         pdSchemeYear: pd.scheme_year ?? null,
         pdEffectiveAy: pd.effective_ay ?? null,
         pdStatus: pd.status ?? null,
-        pdUpdatedAt,
-        pdCreatedAt,
+        pdUpdatedAt: pd.updated_at ?? pd.updatedAt ?? null,
+        pdCreatedAt: pd.created_at ?? pd.createdAt ?? null,
         programName: pd.program_name,
         programCode: pd.program_id,
         pdCreatorName: pd.created_by?.name || "Admin",
         pdReviewerName: pd.approved_by?.name || null,
         pdTotalCredits: pd.total_credits ?? 0,
         pdAcademicCredits: pd.academic_credits ?? 0,
-      };
-
-      if (!pdGroups.has(pdKey)) pdGroups.set(pdKey, { ...pdMeta, courses: [] });
-      const group = pdGroups.get(pdKey);
-
-      const pushCourse = (c, context, type) => {
-        if (!isMine(c)) return;
-        const exists = group.courses.some(
-          (x) => x.courseCode === c.code && x.context === context,
-        );
-        if (exists) return;
-        group.courses.push({
-          courseCode: c.code,
-          courseTitle: c.title,
-          programName: pd.program_name,
-          programCode: pd.program_id,
-          type: c.type || type || "Theory",
-          credits: c.credits,
-          context,
-          pdCreatorName: pdMeta.pdCreatorName,
-          pdId: pd._id,
-          pdVersion,
-          pdUpdatedAt,
-        });
-      };
-
-      pd.pd_data?.semesters?.forEach((sem) => {
-        sem.courses?.forEach((c) => pushCourse(c, `Semester ${sem.sem_no}`));
-        sem.categories?.forEach((cat) => {
-          cat.courses?.forEach((c) =>
-            pushCourse(c, `Semester ${sem.sem_no} (${cat.categoryName})`),
-          );
-        });
+        courses,
       });
-
-      pd.pd_data?.section4?.professionalElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) =>
-          pushCourse(
-            c,
-            grp.title || `PE Group ${gi + 1}`,
-            "Professional Elective",
-          ),
-        );
-      });
-
-      pd.pd_data?.section4?.openElectives?.forEach((grp, gi) => {
-        grp.courses?.forEach((c) =>
-          pushCourse(c, grp.title || `OE Group ${gi + 1}`, "Open Elective"),
-        );
-      });
-
-      pd.pd_data?.section4?.technicalCompetencyCourses?.forEach((c) => {
-        pushCourse(c, "Technical Competency Courses", "Technical Competency");
-      });
-    });
-
-    const allCourseCodes = Array.from(
-      new Set(
-        Array.from(pdGroups.values()).flatMap((g) =>
-          g.courses.map((c) => c.courseCode),
-        ),
-      ),
-    );
-
-    let allCDs = [];
-    try {
-      allCDs = await CourseDocument.find({ courseCode: { $in: allCourseCodes } })
-        .sort({ createdAt: -1 })
-        .populate("createdBy", "name email")
-        .populate("approvedBy", "name email")
-        .lean();
-    } catch (popErr) {
-      console.warn(
-        "getAssignedCDs: CourseDocument populate failed.",
-        popErr.message,
-      );
-      allCDs = await CourseDocument.find({
-        courseCode: { $in: allCourseCodes },
-      })
-        .sort({ createdAt: -1 })
-        .lean();
     }
+
+    // 3. Load all CD versions for the codes we now own
+    const allCDs = await CourseDocument.find({
+      courseCode: { $in: [...allCodes] },
+    })
+      .populate("createdBy", "name email")
+      .populate("approvedBy", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
 
     const cdsByCourse = new Map();
     allCDs.forEach((cd) => {
@@ -823,29 +926,28 @@ export const getAssignedCDs = async (req, res) => {
       cdsByCourse.get(cd.courseCode).push(cd);
     });
 
-    const sortPDs = (a, b) => {
-      const na = parseFloat(a.pdVersion);
-      const nb = parseFloat(b.pdVersion);
-      if (!isNaN(na) && !isNaN(nb) && na !== nb) return nb - na;
-      return new Date(b.pdUpdatedAt || 0) - new Date(a.pdUpdatedAt || 0);
-    };
-
-    const sortedGroups = Array.from(pdGroups.values())
-      .filter((g) => g.courses.length > 0)
-      .sort(sortPDs);
-
-    const pdTree = sortedGroups.map((group, idx) => {
-      const isLatest = idx === 0;
-      const groupVer = group.pdVersion;
-
+    // 4. Enrich each course — only surface `cdId` when this creator's own
+    //    CD belongs to the CURRENT PD version
+    const enrichedGroups = pdGroups.map((group) => {
       const enrichedCourses = group.courses.map((course) => {
-        const allForCourse = cdsByCourse.get(course.courseCode) || [];
-        const { latestCurrent, reusable } = resolveCDsForPDVersion(
-          allForCourse,
-          groupVer,
+        const versions = cdsByCourse.get(course.courseCode) || [];
+
+        const ownCurrentVersion = versions.filter(
+          (cd) =>
+            String(cd.createdBy?._id || cd.createdBy) === creatorId &&
+            String(cd.pdVersion || "") === String(course.pdVersion || ""),
         );
 
-        const timeline = allForCourse.map((cd) => ({
+        const latestOwn = ownCurrentVersion[0] || null;
+
+        const reusable = versions.filter(
+          (cd) =>
+            String(cd.createdBy?._id || cd.createdBy) === creatorId &&
+            String(cd.pdVersion || "") !== String(course.pdVersion || "") &&
+            cd.status !== "Approved",
+        );
+
+        const timeline = versions.map((cd) => ({
           _id: cd._id,
           cdVersion: cd.cdVersion,
           status: cd.status,
@@ -858,43 +960,48 @@ export const getAssignedCDs = async (req, res) => {
           rejectionMessage: cd.rejectionMessage || null,
         }));
 
-        const reusableSources = reusable.map((cd) => ({
-          _id: cd._id,
-          cdVersion: cd.cdVersion,
-          status: cd.status,
-          pdVersion: cd.pdVersion || null,
-          updatedAt: cd.updatedAt,
-          createdByName: cd.createdBy?.name || "Unknown",
-          courseTitle: cd.courseTitle,
-        }));
-
         return {
           ...course,
-          cdId: latestCurrent?._id || null,
-          cdStatus: latestCurrent?.status || "Not Started",
-          cdVersion: latestCurrent?.cdVersion || null,
-          cdUpdatedAt: latestCurrent?.updatedAt || null,
-          cdCreatedByName: latestCurrent?.createdBy?.name || null,
-          cdReviewerName: latestCurrent?.approvedBy?.name || null,
+          cdId: latestOwn?._id || null,
+          cdStatus: latestOwn?.status || "Not Started",
+          cdVersion: latestOwn?.cdVersion || null,
+          cdUpdatedAt: latestOwn?.updatedAt || null,
+          cdCreatedByName: latestOwn?.createdBy?.name || null,
+          cdReviewerName: latestOwn?.approvedBy?.name || null,
           cdTimeline: timeline,
-          reusableSources,
+          reusableSources: reusable.map((cd) => ({
+            _id: cd._id,
+            cdVersion: cd.cdVersion,
+            status: cd.status,
+            pdVersion: cd.pdVersion || null,
+            updatedAt: cd.updatedAt,
+            createdByName: cd.createdBy?.name || "Unknown",
+            courseTitle: cd.courseTitle,
+          })),
           hasReusableHistory: reusable.length > 0,
-          isHistoricalSnapshot: !isLatest,
+          isHistoricalSnapshot: false,
         };
       });
 
       return {
         ...group,
-        isLatest,
+        isLatest: true,
         courseCount: enrichedCourses.length,
         courses: enrichedCourses,
       };
     });
 
+    enrichedGroups.sort((a, b) => {
+      const aApproved = a.pdStatus === "approved" ? 1 : 0;
+      const bApproved = b.pdStatus === "approved" ? 1 : 0;
+      if (aApproved !== bApproved) return bApproved - aApproved;
+      return new Date(b.pdUpdatedAt || 0) - new Date(a.pdUpdatedAt || 0);
+    });
+
     return res.json({
       success: true,
-      pdGroups: pdTree,
-      assignedCourses: pdTree,
+      pdGroups: enrichedGroups,
+      assignedCourses: enrichedGroups,
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -904,7 +1011,6 @@ export const getAssignedCDs = async (req, res) => {
       .json({ success: false, message: "Failed to fetch assigned courses." });
   }
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // REUSE / CLONE PREVIOUS CD → CURRENT PD VERSION
 // ─────────────────────────────────────────────────────────────────────────────

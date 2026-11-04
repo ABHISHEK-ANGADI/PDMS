@@ -20,6 +20,16 @@
  *
  * Designed for: ~80,000 concurrent users
  * React Optimizations: useMemo, useCallback, lazy renders, stable refs
+ *
+ * 🔑 ASSIGNMENT-ONLY TRACKING:
+ *   A `contentChangedRef` ref tracks whether any NON-assignee field has been
+ *   modified since the last successful save. Assignment handlers (assign /
+ *   reassign creators) do NOT flip this ref. On save, if the ref is still
+ *   `false`, we send `isWorkflowUpdate: true` so the backend knows to update
+ *   the document IN PLACE without bumping the version number. This is the
+ *   frontend half of the "don't increment version on assignee change" fix;
+ *   the backend also independently deep-compares pd_data to guard against
+ *   clients that omit the flag.
  */
 
 import React, {
@@ -106,16 +116,6 @@ const STANDARD_POS = [
   "Lifelong learning Recognize the need for, and have the preparation and ability to engage in independent and life-long learning in the broadest context of technological change.",
 ];
 
-/**
- * Unified blank state — compatible with both 2024 and 2026 schemas.
- * Section 4 is now polymorphic:
- *   2024 schema → professionalElectives[] / openElectives[]
- *   2026 schema → technicalCompetencyCourses[], programDeliveryAndAttainment,
- *                 teachingLearningMethods[], attendance, assessmentGrading{},
- *                 awardOfDegree, studentSupport[], qualityControlMeasures[], notes
- * Both shapes are always present so the renderer can pick by schemaVersion
- * without losing data when switching schemas.
- */
 const BLANK_PD_DATA = {
   details: {
     university: "",
@@ -154,7 +154,6 @@ const BLANK_PD_DATA = {
     courses: [],
     categories: [],
   })),
-  // Guarantee section4 object exists immediately
   section4: {
     professionalElectives: [],
     openElectives: [],
@@ -179,8 +178,8 @@ const BLANK_META = {
   programId: "",
   programCode: "",
   programName: "",
-  schemaVersion: "2026", // Default to latest
-  parseMode: "auto", // "auto" | "stable" | "dynamic"
+  schemaVersion: "2026",
+  parseMode: "auto",
   schemeYear: "",
   versionNo: "1.0.0",
   effectiveAy: "",
@@ -202,7 +201,6 @@ const STEP_CONFIG = [
   },
 ];
 
-/** Parsing step definitions used in the progress UI. */
 const PARSE_STEPS = [
   { id: "upload", label: "Uploading file securely", icon: UploadCloud },
   { id: "detect", label: "Detecting schema version", icon: FileSearch },
@@ -217,7 +215,7 @@ const PARSE_STEPS = [
 // ═════════════════════════════════════════════════════════════════════════════
 
 const UPLOAD_INIT = {
-  status: "idle", // idle | uploading | parsing | mapping | success | error
+  status: "idle",
   progress: 0,
   message: "",
   steps: PARSE_STEPS.map((s) => ({ ...s, status: "pending" })),
@@ -352,13 +350,10 @@ const buildApiService = (axios, createrToken) => {
 
   return {
     importAuto: (formData, schema, parseMode, signal) => {
-      // CRITICAL FIX: Explicitly append the schema version so Node.js receives it
       formData.append("schemaVersion", schema);
-
-      // We now use a single unified endpoint, because the Python script handles both!
       return axios.post("/api/creater/pd/import", formData, {
         headers: multipartHeaders,
-        timeout: 120000, // 2 Minutes
+        timeout: 120000,
         signal,
       });
     },
@@ -375,18 +370,15 @@ const buildApiService = (axios, createrToken) => {
       axios.post("/api/creater/pd/ai-enhance", body, { headers }),
     aiEnhanceSection: (body) =>
       axios.post("/api/creater/pd/ai-enhance-section", body, { headers }),
-    // NEW: AI table-paste parser — used by the "AI Auto-Fill" buttons across
-    // both the 2024 and 2026 schemas
     parseTable: (body) =>
       axios.post("/api/creater/pd/ai-parse-table", body, { headers }),
   };
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// § 5. REUSABLE UI COMPONENTS
+// § 5. REUSABLE UI COMPONENTS  (unchanged)
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Debounced text input — avoids re-renders on every keystroke. */
 const OptimizedInput = React.memo(
   ({ value, onChange, debounceTime = 300, className = "", ...props }) => {
     const [local, setLocal] = useState(value ?? "");
@@ -422,11 +414,9 @@ const OptimizedInput = React.memo(
 );
 OptimizedInput.displayName = "OptimizedInput";
 
-/** Step progress bar — memoized so it never re-renders on every keystroke. */
 const StepProgressBar = React.memo(
   ({ activeStep, onStepClick, completions }) => (
     <div className="w-full">
-      {/* Mobile pill bar */}
       <div className="flex sm:hidden gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
         {STEP_CONFIG.map((step) => (
           <button
@@ -445,7 +435,6 @@ const StepProgressBar = React.memo(
         ))}
       </div>
 
-      {/* Desktop step bar */}
       <div className="hidden sm:flex items-center bg-white border border-gray-200 rounded-xl p-1.5 shadow-sm">
         {STEP_CONFIG.map((step, idx) => (
           <React.Fragment key={step.id}>
@@ -492,7 +481,6 @@ const StepProgressBar = React.memo(
 );
 StepProgressBar.displayName = "StepProgressBar";
 
-/** Card wrapper used across all sections. */
 const SectionCard = ({
   icon,
   iconBg,
@@ -577,12 +565,11 @@ const AssignBtn = ({ course, onClick }) => (
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// § 6. PARSING PROGRESS UI COMPONENT
+// § 6. PARSING PROGRESS UI COMPONENT (unchanged)
 // ═════════════════════════════════════════════════════════════════════════════
 
 const ParsingProgressView = ({ uploadState, onCancel }) => (
   <div className="w-full max-w-lg mx-auto py-2">
-    {/* Header */}
     <div className="flex items-center justify-between mb-3">
       <div className="flex items-center gap-2">
         <Cpu size={16} className="text-violet-600 animate-pulse" />
@@ -595,7 +582,6 @@ const ParsingProgressView = ({ uploadState, onCancel }) => (
       </span>
     </div>
 
-    {/* Progress bar */}
     <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden mb-5">
       <div
         className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 transition-all duration-500"
@@ -603,7 +589,6 @@ const ParsingProgressView = ({ uploadState, onCancel }) => (
       />
     </div>
 
-    {/* Step list */}
     <div className="space-y-2.5 mb-5">
       {uploadState.steps.map((s) => {
         const StepIcon = s.icon || CheckCircle2;
@@ -648,7 +633,7 @@ const ParsingProgressView = ({ uploadState, onCancel }) => (
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// § 7. EXTRACTION SUMMARY COMPONENT
+// § 7. EXTRACTION SUMMARY COMPONENT (unchanged)
 // ═════════════════════════════════════════════════════════════════════════════
 
 const ExtractionSummary = ({ summary, onReset }) => (
@@ -710,7 +695,7 @@ const ExtractionSummary = ({ summary, onReset }) => (
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// § 8. MODALS
+// § 8. MODALS  (unchanged)
 // ═════════════════════════════════════════════════════════════════════════════
 
 const ReviewSubmitModal = ({ isOpen, onClose, onConfirm, apiService }) => {
@@ -766,10 +751,11 @@ const ReviewSubmitModal = ({ isOpen, onClose, onConfirm, apiService }) => {
             admins.map((admin) => (
               <label
                 key={admin._id}
-                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${selected === admin._id
-                  ? "border-blue-500 bg-blue-50/50"
-                  : "border-gray-200 hover:border-blue-300"
-                  }`}
+                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                  selected === admin._id
+                    ? "border-blue-500 bg-blue-50/50"
+                    : "border-gray-200 hover:border-blue-300"
+                }`}
               >
                 <div className="flex items-center gap-3">
                   <input
@@ -881,7 +867,6 @@ const AIAssistantModal = ({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-        {/* Header */}
         <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 text-white">
             <div className="p-2 bg-white/10 rounded-lg">
@@ -904,9 +889,7 @@ const AIAssistantModal = ({
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex flex-col lg:flex-row h-[60vh] max-h-[600px] overflow-hidden bg-gray-50">
-          {/* LEFT: instructions */}
           <div className="w-full lg:w-1/2 flex flex-col border-r border-gray-200 bg-white">
             <div className="p-5 flex-1 flex flex-col min-h-0">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -955,7 +938,6 @@ const AIAssistantModal = ({
             </div>
           </div>
 
-          {/* RIGHT: live preview */}
           <div className="w-full lg:w-1/2 flex flex-col bg-gray-50">
             <div className="p-5 flex-1 flex flex-col min-h-0">
               <div className="flex items-center justify-between mb-3">
@@ -984,7 +966,6 @@ const AIAssistantModal = ({
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-6 py-4 bg-white border-t border-gray-100 flex items-center justify-end gap-3 rounded-b-3xl">
           <button
             onClick={onClose}
@@ -1114,7 +1095,6 @@ const CreatePD = () => {
   const location = useLocation();
   const { axios, createrToken } = useAppContext();
 
-  // ── Stable API service (only rebuilds if token changes) ────────────────
   const apiService = useMemo(
     () => buildApiService(axios, createrToken),
     [axios, createrToken],
@@ -1132,7 +1112,7 @@ const CreatePD = () => {
   const [availablePrograms, setAvailablePrograms] = useState([]);
   const [recentVersions, setRecentVersions] = useState([]);
 
-  // ── Upload state (via reducer for correctness) ───────────────────────────
+  // ── Upload state ─────────────────────────────────────────────────────────
   const [uploadState, dispatchUpload] = useReducer(uploadReducer, UPLOAD_INIT);
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
@@ -1141,6 +1121,13 @@ const CreatePD = () => {
   const [metaData, setMetaData] = useState(BLANK_META);
   const [pdData, setPdData] = useState(BLANK_PD_DATA);
   const [dirty, setDirty] = useState(false);
+
+  // 🔑 ASSIGNMENT-ONLY TRACKING
+  // `contentChangedRef` stays `false` while the user ONLY re-assigns creators.
+  // Any non-assignee edit (title, credit, PEO text, section4 content, etc.)
+  // flips it to `true`. On save we send `isWorkflowUpdate = !contentChangedRef.current`
+  // so the backend updates the doc in place without bumping the version.
+  const contentChangedRef = useRef(false);
 
   // ── Modals ───────────────────────────────────────────────────────────────
   const [showSidebar, setShowSidebar] = useState(false);
@@ -1159,7 +1146,7 @@ const CreatePD = () => {
   const dropdownRef = useRef(null);
   const sidebarRef = useRef(null);
 
-  // ── Jodit config — memoized once ─────────────────────────────────────────
+  // ── Jodit config ─────────────────────────────────────────────────────────
   const joditConfig = useMemo(
     () => ({
       readonly: false,
@@ -1220,7 +1207,6 @@ const CreatePD = () => {
   // § 9.1  EFFECTS
   // ═════════════════════════════════════════════════════════════════════════
 
-  /** Close program dropdown on outside click */
   useEffect(() => {
     const fn = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target))
@@ -1230,7 +1216,6 @@ const CreatePD = () => {
     return () => document.removeEventListener("mousedown", fn);
   }, []);
 
-  /** Load creator profile */
   useEffect(() => {
     (async () => {
       try {
@@ -1250,7 +1235,6 @@ const CreatePD = () => {
     })();
   }, [axios, createrToken]);
 
-  /** Restore draft from localStorage on mount */
   useEffect(() => {
     if (!location.state?.loadId) {
       const savedMeta = localStorage.getItem("pd_draft_meta");
@@ -1259,6 +1243,9 @@ const CreatePD = () => {
         try {
           setMetaData(JSON.parse(savedMeta));
           setPdData(JSON.parse(savedData));
+          // 🔑 Draft restored from localStorage could contain unsaved content
+          // edits, so treat it as content-changed to be safe.
+          contentChangedRef.current = true;
           toast("Restored unsaved draft");
         } catch {
           clearLocalDraft();
@@ -1267,12 +1254,10 @@ const CreatePD = () => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Load specific PD from router state */
   useEffect(() => {
     if (location.state?.loadId) fetchFullPD(location.state.loadId);
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Auto-save to localStorage (debounced 1 s) */
   useEffect(() => {
     if (!dirty || !metaData.programCode) return;
     const t = setTimeout(() => {
@@ -1296,10 +1281,11 @@ const CreatePD = () => {
       try {
         const { data } = await apiService.fetchVersions(code);
         if (data.success) setRecentVersions(data.versions);
-      } catch (_) { }
+      } catch (_) {}
     },
     [apiService],
   );
+
   const fetchFullPD = useCallback(
     async (pdId) => {
       setLoading(true);
@@ -1329,8 +1315,6 @@ const CreatePD = () => {
       if (data.success && data.versions?.length > 0) {
         setRecentVersions(data.versions);
 
-        // Prefer fetching the latest draft of the CURRENTLY selected schema,
-        // otherwise fallback to the absolute latest document in history.
         const targetVersion =
           data.versions.find((v) => v.scheme_year === metaData.schemaVersion) ||
           data.versions[0];
@@ -1346,9 +1330,7 @@ const CreatePD = () => {
     }
   }, [metaData.programCode, metaData.schemaVersion, apiService, fetchFullPD]);
 
-  /** Normalize a raw section4 payload to guarantee both 2024 & 2026 shapes exist. */
   const normaliseSection4 = useCallback((raw) => {
-    // Define the absolute base structure inside the function to ensure it's always fresh
     const baseS4 = {
       professionalElectives: [],
       openElectives: [],
@@ -1393,7 +1375,6 @@ const CreatePD = () => {
     (pd) => {
       if (!pd.pd_data) return;
 
-      // Normalise: ensure both `courses` and `categories` exist on every semester
       const sems = (pd.pd_data.semesters || []).map((s) => ({
         sem_no: s.sem_no,
         courses: s.courses || [],
@@ -1403,8 +1384,6 @@ const CreatePD = () => {
         sems.push({ sem_no: sems.length + 1, courses: [], categories: [] });
       }
 
-      // Support legacy documents saved with old top-level prof_electives /
-      // open_electives instead of the new polymorphic section4 object.
       let section4Source = pd.pd_data.section4;
       if (!section4Source) {
         section4Source = {
@@ -1434,11 +1413,14 @@ const CreatePD = () => {
         status: pd.status || "draft",
       });
       setDirty(false);
+      // 🔑 Freshly loaded doc — reset content-change tracker.
+      contentChangedRef.current = false;
     },
     [normaliseSection4],
   );
+
   // ═════════════════════════════════════════════════════════════════════════
-  // § 9.3  PDF UPLOAD & PARSING (with abort + retry)
+  // § 9.3  PDF UPLOAD & PARSING
   // ═════════════════════════════════════════════════════════════════════════
 
   const handleDrag = useCallback((e) => {
@@ -1466,7 +1448,6 @@ const CreatePD = () => {
     }
   }, [uploadState.controller]);
 
-  /** Merge parser output into existing pdData without overwriting user edits. */
   const normaliseParsedData = useCallback(
     (prev, imp) => {
       const n = { ...prev };
@@ -1533,11 +1514,8 @@ const CreatePD = () => {
         n.semesters = merged;
       }
 
-      // STRICT POLYMORPHIC SECTION 4 MERGE
-      // Ensure section4 is always defined before passing to normalizer
       let incomingSection4 = imp.section4 || {};
 
-      // Fallback for legacy 2024 parser arrays at root level
       if (imp.prof_electives?.length)
         incomingSection4.professionalElectives = imp.prof_electives;
       if (imp.open_electives?.length)
@@ -1552,20 +1530,9 @@ const CreatePD = () => {
     },
     [normaliseSection4],
   );
-  /**
-   * Core upload function.
-   * isRetry = true → fallback from dynamic to stable parser.
-   */
-  // ═════════════════════════════════════════════════════════════════════════
-  // § REPLACE inside the CreatePD component body
-  // ═════════════════════════════════════════════════════════════════════════
 
   const processPDFUpload = useCallback(
     async (file, isRetry = false) => {
-      // Hard guard: full-document PDF import is only supported for the 2024
-      // schema. This prevents the 2026 dynamic structure from ever being
-      // saved through the legacy flat-course mapping path.
-
       if (file.type !== "application/pdf") {
         return dispatchUpload({
           type: "ERROR",
@@ -1583,8 +1550,6 @@ const CreatePD = () => {
       dispatchUpload({ type: "START", controller });
 
       const formData = new FormData();
-      // CRITICAL FIX: Append schemaVersion BEFORE the file!
-      // Multer sequentially parses the stream, so it needs to read this first.
       formData.append("schemaVersion", metaData.schemaVersion);
       formData.append("pdFile", file);
 
@@ -1626,7 +1591,6 @@ const CreatePD = () => {
         if (!data.success)
           throw new Error(data.message || "Invalid parser response.");
 
-        // Animate remaining steps
         dispatchUpload({
           type: "STEP",
           stepId: "map",
@@ -1657,7 +1621,6 @@ const CreatePD = () => {
           : 100;
         const schemaDetected = data.schemaVersion || metaData.schemaVersion;
 
-        // Merge parsed data into state
         setPdData((prev) => normaliseParsedData(prev, imp));
 
         if (imp.details?.program_name) {
@@ -1669,6 +1632,8 @@ const CreatePD = () => {
         }
 
         setDirty(true);
+        // 🔑 PDF import mutates content → must bump version on next save.
+        contentChangedRef.current = true;
 
         const totalCourses = (imp.semesters || []).reduce(
           (acc, sem) =>
@@ -1737,11 +1702,15 @@ const CreatePD = () => {
       normaliseParsedData,
     ],
   );
+
   // ═════════════════════════════════════════════════════════════════════════
-  // § 9.4  DATA MUTATION HELPERS (all stable refs via useCallback)
+  // § 9.4  DATA MUTATION HELPERS
+  //   🔑 Every non-assignee setter flips `contentChangedRef.current = true`.
+  //   🔑 Assignment setters (handleAssign*) intentionally DO NOT flip it.
   // ═════════════════════════════════════════════════════════════════════════
 
   const handleMetaChange = useCallback((f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setMetaData((p) => ({ ...p, [f]: v }));
   }, []);
@@ -1758,48 +1727,46 @@ const CreatePD = () => {
       )
         return;
 
-      // Update the UI immediately
       setMetaData((p) => ({ ...p, schemaVersion: newSchema }));
 
-      // Clear any lingering PDF-uploader state — the uploader is 2024-only,
-      // so a leftover error/summary from a prior schema shouldn't persist.
       dispatchUpload({ type: "RESET" });
 
       if (!metaData.programCode) {
+        contentChangedRef.current = true; // 🔑 schema swap is a content change
         setDirty(true);
         return;
       }
 
       setLoading(true);
       try {
-        // Look through our fetched history to see if a document exists for this schema year
         const existingForSchema = recentVersions.find(
           (v) => String(v.scheme_year) === String(newSchema),
         );
 
         if (existingForSchema) {
-          // Found an existing document for this schema year -> Auto-fetch it!
           await fetchLatestPD();
           await fetchFullPD(existingForSchema._id);
+          // populateForm() already resets contentChangedRef
         } else {
-          // No history for this specific schema year -> Give them a clean slate
           toast(`No history for Schema ${newSchema}. Starting fresh.`, {
             icon: "💡",
           });
 
           setPdData((prev) => ({
             ...BLANK_PD_DATA,
-            details: prev.details, // Keep the institutional details populated
+            details: prev.details,
             award: prev.award,
           }));
 
           setMetaData((p) => ({
             ...p,
             schemaVersion: newSchema,
-            isNew: true, // Ensures it saves safely as a new 1.0.0 for this specific schema year
+            isNew: true,
             versionNo: "1.0.0",
             status: "draft",
           }));
+          // 🔑 Fresh blank slate — assignment-only tracker starts clean.
+          contentChangedRef.current = false;
           setDirty(true);
         }
       } catch (err) {
@@ -1808,7 +1775,7 @@ const CreatePD = () => {
         setLoading(false);
       }
     },
-    [dirty, metaData.programCode, recentVersions, fetchFullPD],
+    [dirty, metaData.programCode, recentVersions, fetchFullPD, fetchLatestPD],
   );
 
   const handleParseModeChange = useCallback((e) => {
@@ -1816,6 +1783,7 @@ const CreatePD = () => {
   }, []);
 
   const handleNestedChange = useCallback((sec, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({ ...p, [sec]: { ...p[sec], [f]: v } }));
   }, []);
@@ -1823,12 +1791,14 @@ const CreatePD = () => {
   const handleOverviewChange = useCallback((c) => {
     setPdData((p) => {
       if (c === p.overview) return p;
+      contentChangedRef.current = true; // 🔑
       setDirty(true);
       return { ...p, overview: c };
     });
   }, []);
 
   const handleArrayChange = useCallback((k, i, c) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const a = [...p[k]];
@@ -1838,23 +1808,27 @@ const CreatePD = () => {
   }, []);
 
   const addArrayItem = useCallback((k, d = "") => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({ ...p, [k]: [...p[k], d] }));
   }, []);
 
   const removeArrayItem = useCallback((k, i) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({ ...p, [k]: p[k].filter((_, idx) => idx !== i) }));
   }, []);
 
   const resetPOs = useCallback(() => {
     if (window.confirm("Replace all POs with the standard 12?")) {
+      contentChangedRef.current = true; // 🔑
       setDirty(true);
       setPdData((p) => ({ ...p, pos: [...STANDARD_POS] }));
     }
   }, []);
 
   const updateCreditDef = useCallback((k, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -1862,8 +1836,8 @@ const CreatePD = () => {
     }));
   }, []);
 
-  /** Generic section4 field setter — used by every polymorphic Section 4 control. */
   const handleSection4Change = useCallback((field, value) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -1873,6 +1847,7 @@ const CreatePD = () => {
 
   // Structure table
   const addStructureItem = useCallback(() => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -1883,6 +1858,7 @@ const CreatePD = () => {
     }));
   }, []);
   const removeStructureItem = useCallback((i) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -1890,6 +1866,7 @@ const CreatePD = () => {
     }));
   }, []);
   const updateStructureItem = useCallback((i, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const t = [...p.structure_table];
@@ -1900,6 +1877,7 @@ const CreatePD = () => {
 
   // Semesters
   const addSemester = useCallback(() => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const max = Math.max(...p.semesters.map((s) => s.sem_no), 0);
@@ -1915,6 +1893,7 @@ const CreatePD = () => {
 
   const removeSemester = useCallback((i) => {
     if (window.confirm("Delete this semester?")) {
+      contentChangedRef.current = true; // 🔑
       setDirty(true);
       setPdData((p) => ({
         ...p,
@@ -1925,6 +1904,7 @@ const CreatePD = () => {
 
   // 2024: flat course handlers
   const addCourse2024 = useCallback((si) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = [...p.semesters];
@@ -1939,6 +1919,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeCourse2024 = useCallback((si, ci) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = [...p.semesters];
@@ -1947,6 +1928,7 @@ const CreatePD = () => {
     });
   }, []);
   const updateCourse2024 = useCallback((si, ci, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -1962,6 +1944,7 @@ const CreatePD = () => {
 
   // 2026: category + course handlers
   const addCategory2026 = useCallback((si) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = [...p.semesters];
@@ -1980,6 +1963,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeCategory2026 = useCallback((si, catIdx) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = [...p.semesters];
@@ -1991,6 +1975,7 @@ const CreatePD = () => {
     });
   }, []);
   const updateCategoryName2026 = useCallback((si, catIdx, val) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2004,6 +1989,7 @@ const CreatePD = () => {
     });
   }, []);
   const addCourse2026 = useCallback((si, catIdx) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2011,18 +1997,18 @@ const CreatePD = () => {
         const cats = sem.categories.map((cat, j) =>
           j === catIdx
             ? {
-              ...cat,
-              courses: [
-                ...cat.courses,
-                {
-                  code: "",
-                  title: "",
-                  credits: 3,
-                  type: "Theory",
-                  category: "Core",
-                },
-              ],
-            }
+                ...cat,
+                courses: [
+                  ...cat.courses,
+                  {
+                    code: "",
+                    title: "",
+                    credits: 3,
+                    type: "Theory",
+                    category: "Core",
+                  },
+                ],
+              }
             : cat,
         );
         return { ...sem, categories: cats };
@@ -2031,6 +2017,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeCourse2026 = useCallback((si, catIdx, ci) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2046,6 +2033,7 @@ const CreatePD = () => {
     });
   }, []);
   const updateCourse2026 = useCallback((si, catIdx, ci, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2063,20 +2051,14 @@ const CreatePD = () => {
     });
   }, []);
 
-  // ── NEW: 2026 AI Auto-Fill (Table Paste Parser) ─────────────────────────
-  // A single, generic modal-driven flow that lets a creator paste a copied
-  // table for either (a) a specific semester category, or (b) the Technical
-  // Competency Courses table, and have the AI extract structured rows.
-  // ── ADVANCED AI Auto-Fill (Table Paste Parser) ─────────────────────────
-  // A single, generic modal-driven flow that lets a creator paste a copied
-  // table for any table-based section across the 2024 and 2026 schemas.
+  // ── AI Table Parser state ────────────────────────────────────────────────
   const [tableParserConfig, setTableParserConfig] = useState({
     isOpen: false,
-    mode: null, // "category" | "techCompetency" | "flatCourses2024" | "electives2024" | "structureTable"
-    si: null, // Semester Index
-    catIdx: null, // Category Index
-    type: null, // "prof" or "open" for electives
-    gi: null, // Group Index for electives
+    mode: null,
+    si: null,
+    catIdx: null,
+    type: null,
+    gi: null,
   });
 
   const openCategoryTableParser = useCallback((si, catIdx) => {
@@ -2101,7 +2083,6 @@ const CreatePD = () => {
     });
   }, []);
 
-  // For 2024 Flat Semesters
   const openFlatTableParser = useCallback((si) => {
     setTableParserConfig({
       isOpen: true,
@@ -2113,7 +2094,6 @@ const CreatePD = () => {
     });
   }, []);
 
-  // For 2024 Elective Groups
   const openElectiveTableParser = useCallback((type, gi) => {
     setTableParserConfig({
       isOpen: true,
@@ -2125,7 +2105,6 @@ const CreatePD = () => {
     });
   }, []);
 
-  // For Programme Structure Table
   const openStructureTableParser = useCallback(() => {
     setTableParserConfig({
       isOpen: true,
@@ -2148,13 +2127,12 @@ const CreatePD = () => {
     });
   }, []);
 
-  /** Applies AI-extracted rows into the correct part of pdData, based on mode. */
   const handleTableParserApply = useCallback((parsedRows) => {
     if (!Array.isArray(parsedRows) || parsedRows.length === 0) return;
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
 
     setTableParserConfig((cfg) => {
-      // 1. Handle Programme Structure rows (Different Object Shape)
       if (cfg.mode === "structureTable") {
         const cleanedStructureRows = parsedRows.map((r) => ({
           category: (r.category || "").toString().trim(),
@@ -2169,7 +2147,6 @@ const CreatePD = () => {
         return cfg;
       }
 
-      // 2. Handle Course rows (Shared Shape for Semesters & Electives)
       const VALID_TYPES = ["Theory", "Lab", "Theory+Lab", "Project"];
       const cleanedCourses = parsedRows.map((c) => ({
         code: (c.code || "").toString().toUpperCase().trim(),
@@ -2179,7 +2156,6 @@ const CreatePD = () => {
         category: c.category || "Core",
       }));
 
-      // 2026 Category Courses
       if (cfg.mode === "category" && cfg.si !== null && cfg.catIdx !== null) {
         setPdData((p) => {
           const s = [...p.semesters];
@@ -2194,9 +2170,7 @@ const CreatePD = () => {
           ];
           return { ...p, semesters: s };
         });
-      }
-      // 2026 Technical Competency Courses
-      else if (cfg.mode === "techCompetency") {
+      } else if (cfg.mode === "techCompetency") {
         setPdData((p) => ({
           ...p,
           section4: {
@@ -2211,9 +2185,7 @@ const CreatePD = () => {
             ],
           },
         }));
-      }
-      // 2024 Flat Semester Courses
-      else if (cfg.mode === "flatCourses2024" && cfg.si !== null) {
+      } else if (cfg.mode === "flatCourses2024" && cfg.si !== null) {
         setPdData((p) => {
           const s = [...p.semesters];
           s[cfg.si] = {
@@ -2222,9 +2194,7 @@ const CreatePD = () => {
           };
           return { ...p, semesters: s };
         });
-      }
-      // 2024 Elective Groups
-      else if (cfg.mode === "electives2024" && cfg.gi !== null) {
+      } else if (cfg.mode === "electives2024" && cfg.gi !== null) {
         const key =
           cfg.type === "prof" ? "professionalElectives" : "openElectives";
         setPdData((p) => {
@@ -2240,8 +2210,9 @@ const CreatePD = () => {
     });
   }, []);
 
-  // ── Section 4 — 2024 polymorphic Elective group handlers ──
+  // ── Section 4 — 2024 elective group handlers ────────────────────────────
   const addElectiveGroup = useCallback((type) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => ({
@@ -2262,6 +2233,7 @@ const CreatePD = () => {
   }, []);
   const removeElectiveGroup = useCallback((type, i) => {
     if (window.confirm("Remove this group?")) {
+      contentChangedRef.current = true; // 🔑
       setDirty(true);
       const key = type === "prof" ? "professionalElectives" : "openElectives";
       setPdData((p) => ({
@@ -2274,6 +2246,7 @@ const CreatePD = () => {
     }
   }, []);
   const updateElectiveGroupSem = useCallback((type, gi, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2283,6 +2256,7 @@ const CreatePD = () => {
     });
   }, []);
   const updateElectiveGroupTitle = useCallback((type, gi, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2292,6 +2266,7 @@ const CreatePD = () => {
     });
   }, []);
   const addElectiveCourse = useCallback((type, gi) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2304,6 +2279,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeElectiveCourse = useCallback((type, gi, ci) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2313,6 +2289,7 @@ const CreatePD = () => {
     });
   }, []);
   const updateElectiveCourse = useCallback((type, gi, ci, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2327,8 +2304,9 @@ const CreatePD = () => {
     });
   }, []);
 
-  // ── Section 4 — 2026 string-array helpers (Teaching Methods, Student Support, QC Measures) ──
+  // ── Section 4 — 2026 array helpers ──────────────────────────────────────
   const addSection4ArrayItem = useCallback((key) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -2336,6 +2314,7 @@ const CreatePD = () => {
     }));
   }, []);
   const updateSection4ArrayItem = useCallback((key, i, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const a = [...(p.section4[key] || [])];
@@ -2344,6 +2323,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeSection4ArrayItem = useCallback((key, i) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -2354,8 +2334,9 @@ const CreatePD = () => {
     }));
   }, []);
 
-  // ── Section 4 — 2026 Technical Competency Courses ──
+  // ── Section 4 — 2026 Technical Competency Courses ───────────────────────
   const addTechCompetencyCourse = useCallback(() => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -2369,6 +2350,7 @@ const CreatePD = () => {
     }));
   }, []);
   const updateTechCompetencyCourse = useCallback((i, f, v) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => {
       const a = p.section4.technicalCompetencyCourses.map((c, j) =>
@@ -2381,6 +2363,7 @@ const CreatePD = () => {
     });
   }, []);
   const removeTechCompetencyCourse = useCallback((i) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -2392,8 +2375,9 @@ const CreatePD = () => {
     }));
   }, []);
 
-  // ── Section 4 — 2026 Assessment & Grading nested object ──
+  // ── Section 4 — 2026 Assessment & Grading nested object ─────────────────
   const updateAssessmentGrading = useCallback((field, value) => {
+    contentChangedRef.current = true; // 🔑
     setDirty(true);
     setPdData((p) => ({
       ...p,
@@ -2404,8 +2388,15 @@ const CreatePD = () => {
     }));
   }, []);
 
-  // ── Assign creators (semester courses) ──
+  // ═════════════════════════════════════════════════════════════════════════
+  // § ASSIGNMENT HANDLERS
+  //   🔑 These DO NOT touch contentChangedRef.current. That is the whole point
+  //   of the assignment-only tracking — assignment edits must not bump the
+  //   version, so they must not mark the document as "content changed".
+  // ═════════════════════════════════════════════════════════════════════════
+
   const handleAssignCreator2024 = useCallback((si, ci, creator) => {
+    // 🔑 NO contentChangedRef flip — assignment-only update
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2422,6 +2413,7 @@ const CreatePD = () => {
   }, []);
 
   const handleAssignCreator2026 = useCallback((si, catIdx, ci, creator) => {
+    // 🔑 NO contentChangedRef flip
     setDirty(true);
     setPdData((p) => {
       const s = p.semesters.map((sem, i) => {
@@ -2442,6 +2434,7 @@ const CreatePD = () => {
   }, []);
 
   const handleAssignElectiveCreator = useCallback((type, gi, ci, creator) => {
+    // 🔑 NO contentChangedRef flip
     setDirty(true);
     const key = type === "prof" ? "professionalElectives" : "openElectives";
     setPdData((p) => {
@@ -2459,6 +2452,7 @@ const CreatePD = () => {
   }, []);
 
   const handleAssignTechCompetencyCreator = useCallback((ci, creator) => {
+    // 🔑 NO contentChangedRef flip
     setDirty(true);
     setPdData((p) => {
       const a = (p.section4?.technicalCompetencyCourses || []).map((c, j) =>
@@ -2510,7 +2504,6 @@ const CreatePD = () => {
       setLoading(true);
 
       try {
-        // 1. Fetch version history to populate the sidebar
         const { data } = await apiService.fetchVersions(program.code);
         let fetchedVersions = [];
 
@@ -2520,16 +2513,15 @@ const CreatePD = () => {
         }
 
         if (fetchedVersions.length > 0) {
-          // 2. EXISTING DOCUMENT FOUND: Load the absolute most recent one
           await fetchFullPD(fetchedVersions[0]._id);
+          // populateForm() already resets contentChangedRef
         } else {
-          // 3. NO HISTORY: Initialize a completely new blank state
           setMetaData((p) => ({
             ...p,
             programId: program.id,
             programCode: program.code,
             programName: program.name,
-            isNew: true, // Triggers backend to save as v1.0.0
+            isNew: true,
             versionNo: "1.0.0",
             status: "draft",
           }));
@@ -2547,6 +2539,8 @@ const CreatePD = () => {
             award: { ...BLANK_PD_DATA.award, title: program.name },
           }));
 
+          // 🔑 Fresh blank state — nothing has been edited yet.
+          contentChangedRef.current = false;
           setDirty(true);
           toast.success("Initialized new program document.", { icon: "✨" });
         }
@@ -2573,6 +2567,7 @@ const CreatePD = () => {
           sectionData,
         });
         if (data.success) {
+          contentChangedRef.current = true; // 🔑 AI polish = content change
           if (dataKey === "section4") {
             setPdData((p) => ({
               ...p,
@@ -2602,7 +2597,18 @@ const CreatePD = () => {
 
   const triggerAIAssistant = useCallback(
     (fieldName, content, applyCallback) => {
-      setAiModalConfig({ isOpen: true, fieldName, content, applyCallback });
+      // 🔑 Wrap the apply callback so any AI-applied change is treated as
+      // a content change (never an assignment-only update).
+      const wrappedApply = (val) => {
+        contentChangedRef.current = true;
+        applyCallback?.(val);
+      };
+      setAiModalConfig({
+        isOpen: true,
+        fieldName,
+        content,
+        applyCallback: wrappedApply,
+      });
     },
     [],
   );
@@ -2616,12 +2622,9 @@ const CreatePD = () => {
       if (!metaData.programId) return toast.error("Select a program first.");
       setLoading(true);
 
-      // 🔴 STRICT DB SAVING STRIPPER 🔴
-      // We explicitly clone and remove cross-schema arrays so MongoDB never throws schema validation errors
       let sanitizedPdData = JSON.parse(JSON.stringify(pdData));
 
       if (metaData.schemaVersion === "2026") {
-        // Remove 2024 Fields
         delete sanitizedPdData.prof_electives;
         delete sanitizedPdData.open_electives;
         if (sanitizedPdData.section4) {
@@ -2630,7 +2633,6 @@ const CreatePD = () => {
         }
         sanitizedPdData.semesters.forEach((sem) => delete sem.courses);
       } else {
-        // Remove 2026 Fields
         if (sanitizedPdData.section4) {
           delete sanitizedPdData.section4.technicalCompetencyCourses;
           delete sanitizedPdData.section4.teachingLearningMethods;
@@ -2642,6 +2644,18 @@ const CreatePD = () => {
         sanitizedPdData.semesters.forEach((sem) => delete sem.categories);
       }
 
+      // 🔑 ASSIGNMENT-ONLY DETECTION
+      // If no content field changed since the last save (and this isn't a
+      // brand-new program), we flag this save as a workflow/assignment-only
+      // update. The backend then updates the document IN PLACE without
+      // bumping the version number.
+      //
+      // We intentionally only set this when status is NOT being pushed to
+      // "under_review" on a fresh new program — first submit must still
+      // create v1.0.0 normally (isNew handles that).
+      const isWorkflowUpdate =
+        !metaData.isNew && contentChangedRef.current === false;
+
       const payload = {
         programId: metaData.programCode,
         programName: metaData.programName,
@@ -2652,8 +2666,9 @@ const CreatePD = () => {
         academicCredits: metaData.academicCredits,
         isNewProgram: metaData.isNew,
         status,
-        pdData: sanitizedPdData, // Send cleaned data
+        pdData: sanitizedPdData,
         reviewerId,
+        isWorkflowUpdate, // 🔑 tells backend: "assignments only, don't bump"
       };
 
       try {
@@ -2662,7 +2677,9 @@ const CreatePD = () => {
           toast.success(
             status === "under_review"
               ? "Submitted for review!"
-              : "Draft saved.",
+              : isWorkflowUpdate
+                ? "Assignments saved."
+                : "Draft saved.",
           );
           setMetaData((p) => ({
             ...p,
@@ -2672,6 +2689,8 @@ const CreatePD = () => {
           }));
           fetchRecentVersions(metaData.programCode);
           setDirty(false);
+          // 🔑 Successful save — nothing pending anymore.
+          contentChangedRef.current = false;
           clearLocalDraft();
         } else {
           toast.error(data.message);
@@ -2684,6 +2703,7 @@ const CreatePD = () => {
     },
     [metaData, pdData, apiService, fetchRecentVersions],
   );
+
   const handleSaveAndNext = useCallback(async () => {
     await handleSave("draft");
     setActiveStep((p) => Math.min(4, p + 1));
@@ -2702,52 +2722,52 @@ const CreatePD = () => {
       !!metaData.programId,
 
       Array.isArray(pdData.peos) &&
-      pdData.peos.some((p) => p?.trim()) &&
-      Array.isArray(pdData.psos) &&
-      pdData.psos.some((p) => p?.trim()),
+        pdData.peos.some((p) => p?.trim()) &&
+        Array.isArray(pdData.psos) &&
+        pdData.psos.some((p) => p?.trim()),
 
       metaData.schemaVersion === "2026"
         ? Array.isArray(pdData.semesters) &&
-        pdData.semesters.some((s) => {
-          const categories = Array.isArray(s?.categories) ? s.categories : [];
-
-          const categoryCourses = categories.flatMap((cat) =>
-            Array.isArray(cat?.courses) ? cat.courses : [],
-          );
-
-          return categories.length > 0 || categoryCourses.length > 0;
-        })
+          pdData.semesters.some((s) => {
+            const categories = Array.isArray(s?.categories)
+              ? s.categories
+              : [];
+            const categoryCourses = categories.flatMap((cat) =>
+              Array.isArray(cat?.courses) ? cat.courses : [],
+            );
+            return categories.length > 0 || categoryCourses.length > 0;
+          })
         : Array.isArray(pdData.semesters) &&
-        pdData.semesters.some(
-          (s) => Array.isArray(s?.courses) && s.courses.length > 0,
-        ),
+          pdData.semesters.some(
+            (s) => Array.isArray(s?.courses) && s.courses.length > 0,
+          ),
 
       metaData.schemaVersion === "2026"
         ? !!(
-          pdData.section4?.programDeliveryAndAttainment?.trim() ||
-          pdData.section4?.attendance?.trim() ||
-          (Array.isArray(pdData.section4?.technicalCompetencyCourses) &&
-            pdData.section4.technicalCompetencyCourses.length > 0)
-        )
+            pdData.section4?.programDeliveryAndAttainment?.trim() ||
+            pdData.section4?.attendance?.trim() ||
+            (Array.isArray(pdData.section4?.technicalCompetencyCourses) &&
+              pdData.section4.technicalCompetencyCourses.length > 0)
+          )
         : (Array.isArray(pdData.section4?.professionalElectives) &&
-          pdData.section4.professionalElectives.some(
-            (g) => Array.isArray(g?.courses) && g.courses.length > 0,
-          )) ||
-        (Array.isArray(pdData.section4?.openElectives) &&
-          pdData.section4.openElectives.some(
-            (g) => Array.isArray(g?.courses) && g.courses.length > 0,
-          )),
+            pdData.section4.professionalElectives.some(
+              (g) => Array.isArray(g?.courses) && g.courses.length > 0,
+            )) ||
+          (Array.isArray(pdData.section4?.openElectives) &&
+            pdData.section4.openElectives.some(
+              (g) => Array.isArray(g?.courses) && g.courses.length > 0,
+            )),
     ],
 
     [metaData.programId, metaData.schemaVersion, pdData],
   );
+
   // ═════════════════════════════════════════════════════════════════════════
   // § 9.7  RENDER: STEP 1 — Program Info & PDF Upload
   // ═════════════════════════════════════════════════════════════════════════
 
   const renderStep1 = () => (
     <div className="space-y-5 animate-in fade-in duration-200">
-      {/* ── Program & Schema Selection ── */}
       <SectionCard
         icon={<GraduationCap size={16} className="text-blue-500" />}
         iconBg="bg-blue-50"
@@ -2755,7 +2775,6 @@ const CreatePD = () => {
         subtitle="Define the curriculum architecture and link to a program"
       >
         <div className="flex flex-col md:flex-row gap-5 mb-5">
-          {/* Program Search */}
           <div ref={dropdownRef} className="relative flex-1">
             <FieldLabel required>Select Program</FieldLabel>
             <div className="relative">
@@ -2811,7 +2830,6 @@ const CreatePD = () => {
             )}
           </div>
 
-          {/* Schema & Parse Mode */}
           <div className="w-full md:w-72 space-y-3">
             <div>
               <FieldLabel required>PD Schema Version</FieldLabel>
@@ -2836,12 +2854,12 @@ const CreatePD = () => {
               </p>
             </div>
 
-            {/* Active schema badge */}
             <div
-              className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold ${metaData.schemaVersion === "2026"
-                ? "bg-indigo-50 border-indigo-200 text-indigo-600"
-                : "bg-amber-50 border-amber-200 text-amber-600"
-                }`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold ${
+                metaData.schemaVersion === "2026"
+                  ? "bg-indigo-50 border-indigo-200 text-indigo-600"
+                  : "bg-amber-50 border-amber-200 text-amber-600"
+              }`}
             >
               <Zap size={13} />
               {metaData.schemaVersion === "2026"
@@ -2851,7 +2869,6 @@ const CreatePD = () => {
           </div>
         </div>
 
-        {/* Metadata row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-gray-100">
           {[
             {
@@ -2896,9 +2913,7 @@ const CreatePD = () => {
                 }
                 placeholder={placeholder}
                 className={
-                  readOnly
-                    ? "!bg-gray-50 cursor-not-allowed !text-gray-400"
-                    : ""
+                  readOnly ? "!bg-gray-50 cursor-not-allowed !text-gray-400" : ""
                 }
               />
             </div>
@@ -2906,7 +2921,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* ── PDF Parser (2024 ONLY) — restricted per 2026 schema policy ── */}
       {metaData.schemaVersion === "2024" ? (
         <SectionCard
           icon={<UploadCloud size={16} className="text-violet-500" />}
@@ -2923,12 +2937,12 @@ const CreatePD = () => {
             </select>
           }
         >
-          {/* Drop zone */}
           <div
-            className={`relative border-2 border-dashed rounded-2xl p-6 text-center transition-all ${dragActive
-              ? "border-violet-500 bg-violet-50 scale-[1.005]"
-              : "border-gray-200 bg-gray-50/50 hover:bg-gray-50 hover:border-gray-300"
-              }`}
+            className={`relative border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
+              dragActive
+                ? "border-violet-500 bg-violet-50 scale-[1.005]"
+                : "border-gray-200 bg-gray-50/50 hover:bg-gray-50 hover:border-gray-300"
+            }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
@@ -2943,7 +2957,6 @@ const CreatePD = () => {
               id="pd-import-upload"
             />
 
-            {/* ── IDLE ── */}
             {uploadState.status === "idle" && (
               <div className="py-2">
                 <div className="mx-auto w-14 h-14 bg-white rounded-2xl shadow-sm flex items-center justify-center mb-3 border border-gray-100">
@@ -2965,17 +2978,15 @@ const CreatePD = () => {
               </div>
             )}
 
-            {/* ── IN PROGRESS ── */}
             {["uploading", "parsing", "mapping"].includes(
               uploadState.status,
             ) && (
-                <ParsingProgressView
-                  uploadState={uploadState}
-                  onCancel={cancelUpload}
-                />
-              )}
+              <ParsingProgressView
+                uploadState={uploadState}
+                onCancel={cancelUpload}
+              />
+            )}
 
-            {/* ── ERROR ── */}
             {uploadState.status === "error" && (
               <div className="py-2">
                 <ServerCrash size={32} className="mx-auto text-rose-400 mb-3" />
@@ -2999,7 +3010,6 @@ const CreatePD = () => {
               </div>
             )}
 
-            {/* ── SUCCESS ── */}
             {uploadState.status === "success" && uploadState.summary && (
               <ExtractionSummary
                 summary={uploadState.summary}
@@ -3042,7 +3052,6 @@ const CreatePD = () => {
         </SectionCard>
       )}
 
-      {/* ── Institutional Details ── */}
       <SectionCard
         icon={<Settings size={16} className="text-gray-400" />}
         iconBg="bg-gray-100"
@@ -3066,7 +3075,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* ── Award Details ── */}
       <SectionCard
         icon={<Award size={16} className="text-amber-500" />}
         iconBg="bg-amber-50"
@@ -3098,7 +3106,6 @@ const CreatePD = () => {
 
   const renderStep2 = () => (
     <div className="space-y-5 animate-in fade-in duration-200">
-      {/* Program Overview */}
       <SectionCard
         icon={<FileText size={16} className="text-blue-500" />}
         iconBg="bg-blue-50"
@@ -3124,7 +3131,6 @@ const CreatePD = () => {
         />
       </SectionCard>
 
-      {/* PEOs */}
       <SectionCard
         icon={<Target size={16} className="text-indigo-500" />}
         iconBg="bg-indigo-50"
@@ -3181,7 +3187,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* POs */}
       <SectionCard
         icon={<BookOpen size={16} className="text-emerald-500" />}
         iconBg="bg-emerald-50"
@@ -3242,7 +3247,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* PSOs */}
       <SectionCard
         icon={<Sparkles size={16} className="text-amber-500" />}
         iconBg="bg-amber-50"
@@ -3302,10 +3306,9 @@ const CreatePD = () => {
   );
 
   // ═════════════════════════════════════════════════════════════════════════
-  // § 9.9  RENDER: STEP 3 — Structure (schema-driven semesters)
+  // § 9.9  RENDER: STEP 3 — Structure
   // ═════════════════════════════════════════════════════════════════════════
 
-  /** Render a single semester's 2026 category-based view. */
   const renderSem2026 = useCallback(
     (sem, si) => (
       <div className="p-3 space-y-4">
@@ -3470,30 +3473,22 @@ const CreatePD = () => {
     ],
   );
 
-  /** Render a single semester's 2024 flat-course view. */
   const renderSem2024 = useCallback(
     (sem, si) => (
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-xs">
           <thead className="bg-gray-50/60 border-b border-gray-100">
             <tr>
-              {[
-                "#",
-                "Code",
-                "Title",
-                "Cr",
-                "Type",
-                "Category",
-                "Assignee",
-                "",
-              ].map((h, i) => (
-                <th
-                  key={i}
-                  className="px-3 py-2.5 text-left font-semibold text-gray-400 uppercase tracking-wider text-[10px]"
-                >
-                  {h}
-                </th>
-              ))}
+              {["#", "Code", "Title", "Cr", "Type", "Category", "Assignee", ""].map(
+                (h, i) => (
+                  <th
+                    key={i}
+                    className="px-3 py-2.5 text-left font-semibold text-gray-400 uppercase tracking-wider text-[10px]"
+                  >
+                    {h}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -3593,7 +3588,6 @@ const CreatePD = () => {
 
   const renderStep3 = () => (
     <div className="space-y-5 animate-in fade-in duration-200">
-      {/* Credit Definition */}
       <SectionCard
         icon={<Settings size={16} className="text-gray-400" />}
         iconBg="bg-gray-100"
@@ -3624,7 +3618,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* Programme Structure Table */}
       <SectionCard
         icon={<Table size={16} className="text-blue-500" />}
         iconBg="bg-blue-50"
@@ -3737,7 +3730,6 @@ const CreatePD = () => {
         </div>
       </SectionCard>
 
-      {/* Semester-wise Courses (schema-driven) */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
@@ -3747,7 +3739,11 @@ const CreatePD = () => {
             <p className="text-xs text-gray-400 mt-0.5">
               Rendering:{" "}
               <span
-                className={`font-semibold ${metaData.schemaVersion === "2026" ? "text-indigo-600" : "text-amber-600"}`}
+                className={`font-semibold ${
+                  metaData.schemaVersion === "2026"
+                    ? "text-indigo-600"
+                    : "text-amber-600"
+                }`}
               >
                 {metaData.schemaVersion === "2026"
                   ? "2026 Category-based Structure"
@@ -3768,7 +3764,6 @@ const CreatePD = () => {
             key={sem.sem_no}
             className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
           >
-            {/* Semester header */}
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <FolderOpen size={15} className="text-gray-400" />
@@ -3795,7 +3790,6 @@ const CreatePD = () => {
                   </button>
                 ) : (
                   <>
-                    {/* AI Auto-Fill for 2024 flat semester course table */}
                     <button
                       onClick={() => openFlatTableParser(si)}
                       className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100"
@@ -3820,7 +3814,6 @@ const CreatePD = () => {
               </div>
             </div>
 
-            {/* Schema-driven body */}
             {metaData.schemaVersion === "2026"
               ? renderSem2026(sem, si)
               : renderSem2024(sem, si)}
@@ -3831,11 +3824,9 @@ const CreatePD = () => {
   );
 
   // ═════════════════════════════════════════════════════════════════════════
-  // § 9.10 RENDER: STEP 4 — Polymorphic (Electives for 2024 / Institutional
-  //        Delivery & Quality fields for 2026)
+  // § 9.10 RENDER: STEP 4
   // ═════════════════════════════════════════════════════════════════════════
 
-  /** 2024 — Professional / Open elective groups (legacy behaviour, preserved). */
   const renderElectiveSection2024 = useCallback(
     (type) => {
       const isPE = type === "prof";
@@ -3886,7 +3877,6 @@ const CreatePD = () => {
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* AI Auto-Fill for this elective group's course table */}
                     <button
                       onClick={() => openElectiveTableParser(type, gi)}
                       className="text-xs px-2.5 py-1.5 font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 flex items-center gap-1"
@@ -4004,7 +3994,6 @@ const CreatePD = () => {
     ],
   );
 
-  /** Generic editable string-array block (Teaching Methods, Student Support, QC Measures). */
   const renderStringArraySection = useCallback(
     (title, key, icon, iconBg, useEditor = false) => (
       <SectionCard icon={icon} iconBg={iconBg} title={title}>
@@ -4096,7 +4085,6 @@ const CreatePD = () => {
         </>
       ) : (
         <>
-          {/* Technical Competency Courses */}
           <SectionCard
             icon={<BarChart2 size={16} className="text-violet-500" />}
             iconBg="bg-violet-50"
@@ -4135,66 +4123,76 @@ const CreatePD = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {(pdData.section4?.technicalCompetencyCourses || []).map((c, i) => (
-                    <tr key={i} className="hover:bg-gray-50/60 group">
-                      <td className="px-2 py-2 w-28">
-                        <OptimizedInput
-                          value={c.code}
-                          onChange={(v) => updateTechCompetencyCourse(i, "code", v)}
-                          className="!py-1.5 !text-xs uppercase !px-2"
-                        />
-                      </td>
-                      <td className="px-2 py-2">
-                        <OptimizedInput
-                          value={c.title}
-                          onChange={(v) => updateTechCompetencyCourse(i, "title", v)}
-                          className="!py-1.5 !text-xs !px-2"
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-16">
-                        <OptimizedInput
-                          type="number"
-                          value={c.credits}
-                          onChange={(v) =>
-                            updateTechCompetencyCourse(i, "credits", parseInt(v) || 0)
-                          }
-                          className="!py-1.5 !text-xs !text-center"
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-28">
-                        <AssignBtn
-                          course={c}
-                          onClick={() => openTechCompetencyAssignModal(i, c)}
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          onClick={() => removeTechCompetencyCourse(i)}
-                          className="text-gray-300 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-all"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {(!pdData.section4?.technicalCompetencyCourses ||
-                    pdData.section4.technicalCompetencyCourses.length === 0) && (
-                      <tr>
-                        <td
-                          colSpan={5}
-                          className="px-4 py-6 text-center text-xs text-gray-300 italic"
-                        >
-                          No technical competency courses yet. Click + Add Course, or use AI
-                          Auto-Fill.
+                  {(pdData.section4?.technicalCompetencyCourses || []).map(
+                    (c, i) => (
+                      <tr key={i} className="hover:bg-gray-50/60 group">
+                        <td className="px-2 py-2 w-28">
+                          <OptimizedInput
+                            value={c.code}
+                            onChange={(v) =>
+                              updateTechCompetencyCourse(i, "code", v)
+                            }
+                            className="!py-1.5 !text-xs uppercase !px-2"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <OptimizedInput
+                            value={c.title}
+                            onChange={(v) =>
+                              updateTechCompetencyCourse(i, "title", v)
+                            }
+                            className="!py-1.5 !text-xs !px-2"
+                          />
+                        </td>
+                        <td className="px-2 py-2 w-16">
+                          <OptimizedInput
+                            type="number"
+                            value={c.credits}
+                            onChange={(v) =>
+                              updateTechCompetencyCourse(
+                                i,
+                                "credits",
+                                parseInt(v) || 0,
+                              )
+                            }
+                            className="!py-1.5 !text-xs !text-center"
+                          />
+                        </td>
+                        <td className="px-2 py-2 w-28">
+                          <AssignBtn
+                            course={c}
+                            onClick={() => openTechCompetencyAssignModal(i, c)}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => removeTechCompetencyCourse(i)}
+                            className="text-gray-300 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-all"
+                          >
+                            <Trash2 size={12} />
+                          </button>
                         </td>
                       </tr>
-                    )}
+                    ),
+                  )}
+                  {(!pdData.section4?.technicalCompetencyCourses ||
+                    pdData.section4.technicalCompetencyCourses.length ===
+                      0) && (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-6 text-center text-xs text-gray-300 italic"
+                      >
+                        No technical competency courses yet. Click + Add Course,
+                        or use AI Auto-Fill.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </SectionCard>
 
-          {/* Program Delivery & Attainment */}
           <SectionCard
             icon={<BookOpen size={16} className="text-indigo-500" />}
             iconBg="bg-indigo-50"
@@ -4231,7 +4229,6 @@ const CreatePD = () => {
             "bg-blue-50",
           )}
 
-          {/* Attendance Policy */}
           <SectionCard
             icon={<CheckCircle size={16} className="text-emerald-500" />}
             iconBg="bg-emerald-50"
@@ -4258,7 +4255,6 @@ const CreatePD = () => {
             />
           </SectionCard>
 
-          {/* Assessment & Grading */}
           <SectionCard
             icon={<Hash size={16} className="text-amber-500" />}
             iconBg="bg-amber-50"
@@ -4317,9 +4313,8 @@ const CreatePD = () => {
                       triggerAIAssistant(
                         "Assessment & Grading — Passing Criteria",
                         pdData.section4?.assessmentGrading?.passingCriteria ||
-                        "",
-                        (res) =>
-                          updateAssessmentGrading("passingCriteria", res),
+                          "",
+                        (res) => updateAssessmentGrading("passingCriteria", res),
                       )
                     }
                     className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg hover:bg-indigo-100 border border-indigo-200"
@@ -4338,7 +4333,6 @@ const CreatePD = () => {
             </div>
           </SectionCard>
 
-          {/* Award of Degree */}
           <SectionCard
             icon={<Award size={16} className="text-amber-500" />}
             iconBg="bg-amber-50"
@@ -4378,7 +4372,6 @@ const CreatePD = () => {
             "bg-amber-50",
           )}
 
-          {/* Notes */}
           <SectionCard
             icon={<Info size={16} className="text-gray-400" />}
             iconBg="bg-gray-100"
@@ -4440,7 +4433,6 @@ const CreatePD = () => {
             </button>
           </div>
 
-          {/* Progress */}
           <div className="p-4 border-b border-gray-100">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
@@ -4466,10 +4458,20 @@ const CreatePD = () => {
                     setActiveStep(step.id);
                     setShowSidebar(false);
                   }}
-                  className={`w-full flex items-center gap-3 p-2.5 rounded-lg transition-all text-left ${activeStep === step.id ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-600"}`}
+                  className={`w-full flex items-center gap-3 p-2.5 rounded-lg transition-all text-left ${
+                    activeStep === step.id
+                      ? "bg-gray-900 text-white"
+                      : "hover:bg-gray-50 text-gray-600"
+                  }`}
                 >
                   <div
-                    className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${activeStep === step.id ? "bg-white/20 text-white" : completions[i] ? "bg-emerald-100 text-emerald-600" : "bg-gray-100 text-gray-400"}`}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      activeStep === step.id
+                        ? "bg-white/20 text-white"
+                        : completions[i]
+                          ? "bg-emerald-100 text-emerald-600"
+                          : "bg-gray-100 text-gray-400"
+                    }`}
                   >
                     {completions[i] && activeStep !== step.id ? (
                       <CheckCircle size={11} strokeWidth={2.5} />
@@ -4485,7 +4487,6 @@ const CreatePD = () => {
             </div>
           </div>
 
-          {/* Version History */}
           <div className="p-4 flex-1 overflow-y-auto">
             <div className="flex items-center gap-2 mb-3">
               <History size={14} className="text-gray-400" />
@@ -4513,7 +4514,13 @@ const CreatePD = () => {
                         v{ver.version_no}
                       </span>
                       <span
-                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded uppercase ${ver.status === "approved" ? "bg-emerald-50 text-emerald-600" : ver.status === "under_review" ? "bg-blue-50 text-blue-600" : "bg-amber-50 text-amber-600"}`}
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded uppercase ${
+                          ver.status === "approved"
+                            ? "bg-emerald-50 text-emerald-600"
+                            : ver.status === "under_review"
+                              ? "bg-blue-50 text-blue-600"
+                              : "bg-amber-50 text-amber-600"
+                        }`}
                       >
                         {ver.status?.replace("_", " ")}
                       </span>
@@ -4555,7 +4562,6 @@ const CreatePD = () => {
         }}
       />
 
-      {/* ── Modals ── */}
       <AIAssistantModal
         isOpen={aiModalConfig.isOpen}
         onClose={() => setAiModalConfig((p) => ({ ...p, isOpen: false }))}
@@ -4613,7 +4619,10 @@ const CreatePD = () => {
         onSelect={(creator) => {
           if (!currentAssignCtx) return;
           if (currentAssignCtx.isTechCompetency) {
-            handleAssignTechCompetencyCreator(currentAssignCtx.courseIndex, creator);
+            handleAssignTechCompetencyCreator(
+              currentAssignCtx.courseIndex,
+              creator,
+            );
           } else if (currentAssignCtx.isElective) {
             handleAssignElectiveCreator(
               currentAssignCtx.electiveType,
@@ -4653,9 +4662,7 @@ const CreatePD = () => {
 
       {renderSidebar()}
 
-      {/* ── Main Content ── */}
       <div className="max-w-5xl mx-auto px-3 sm:px-4 lg:px-0 pb-10">
-        {/* ── Header ── */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-5">
             <div className="min-w-0">
@@ -4675,10 +4682,11 @@ const CreatePD = () => {
                       {metaData.programName}
                     </span>
                     <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-md uppercase tracking-widest border ${metaData.schemaVersion === "2026"
-                        ? "text-indigo-600 bg-indigo-50 border-indigo-200"
-                        : "text-amber-600 bg-amber-50 border-amber-200"
-                        }`}
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-md uppercase tracking-widest border ${
+                        metaData.schemaVersion === "2026"
+                          ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+                          : "text-amber-600 bg-amber-50 border-amber-200"
+                      }`}
                     >
                       {metaData.schemaVersion} Schema
                     </span>
@@ -4699,7 +4707,6 @@ const CreatePD = () => {
               </div>
             </div>
 
-            {/* Action buttons */}
             <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
               <button
                 onClick={() => navigate("/creator/pd-history")}
@@ -4720,10 +4727,7 @@ const CreatePD = () => {
                 disabled={!metaData.programCode || loading}
                 className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-40"
               >
-                <RefreshCw
-                  size={14}
-                  className={loading ? "animate-spin" : ""}
-                />
+                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
                 <span className="hidden sm:inline">Fetch Latest</span>
               </button>
               <button
@@ -4767,7 +4771,6 @@ const CreatePD = () => {
           />
         </div>
 
-        {/* Unsaved changes banner */}
         {dirty && (
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border text-xs mb-5 bg-yellow-50 border-yellow-200 text-yellow-700">
             <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
@@ -4777,7 +4780,6 @@ const CreatePD = () => {
           </div>
         )}
 
-        {/* ── Step content ── */}
         <div className="min-h-[400px]">
           {activeStep === 1 && renderStep1()}
           {activeStep === 2 && renderStep2()}
@@ -4785,7 +4787,6 @@ const CreatePD = () => {
           {activeStep === 4 && renderStep4()}
         </div>
 
-        {/* ── Bottom navigation ── */}
         <div className="mt-6 flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
           <button
             onClick={() => setActiveStep((p) => Math.max(1, p - 1))}
@@ -4800,7 +4801,11 @@ const CreatePD = () => {
               <button
                 key={step.id}
                 onClick={() => setActiveStep(step.id)}
-                className={`h-2 rounded-full transition-all duration-200 ${activeStep === step.id ? "w-5 bg-gray-800" : "w-2 bg-gray-200 hover:bg-gray-300"}`}
+                className={`h-2 rounded-full transition-all duration-200 ${
+                  activeStep === step.id
+                    ? "w-5 bg-gray-800"
+                    : "w-2 bg-gray-200 hover:bg-gray-300"
+                }`}
               />
             ))}
           </div>
